@@ -49,7 +49,7 @@ contract EthVaultImpl is EthVault, SafeMath{
     }
 
     function getVersion() public pure returns(string memory){
-        return "1028";
+        return "20201209";
     }
 
     function changeActivate(bool activate) public onlyWallet {
@@ -68,24 +68,43 @@ contract EthVaultImpl is EthVault, SafeMath{
         isValidChain[getChainId(_chain)] = valid;
     }
 
-    function deposit(string memory toChain, bytes memory toAddr) payable public onlyActivated {
-        require(isValidChain[getChainId(toChain)]);
-        require(msg.value > 0);
-
-        depositCount = depositCount + 1;
-        emit Deposit(chain, toChain, msg.sender, toAddr, address(0), 18, msg.value, depositCount, block.number);
+    function setBridgingFee(uint _bridgingFee) public onlyWallet {
+        bridgingFee = _bridgingFee;
     }
 
-    function depositToken(address token, string memory toChain, bytes memory toAddr, uint amount) public onlyActivated{
+    function setFeeGovernance(address payable _feeGovernance) public onlyWallet {
+        require(_feeGovernance != address(0));
+        feeGovernance = _feeGovernance;
+    }
+
+    function deposit(string memory toChain, bytes memory toAddr) payable public onlyActivated {
+        require(isValidChain[getChainId(toChain)]);
+        require(msg.value > bridgingFee);
+        require(feeGovernance != address(0));
+
+        uint amount = safeSub(msg.value, bridgingFee);
+
+        _transferBridgingFee(bridgingFee);
+
+        depositCount = depositCount + 1;
+        emit Deposit(chain, toChain, msg.sender, toAddr, address(0), 18, amount, depositCount, block.number);
+    }
+
+    function depositToken(address token, string memory toChain, bytes memory toAddr, uint amount) public payable onlyActivated{
         require(isValidChain[getChainId(toChain)]);
         require(token != address(0));
         require(amount > 0);
+        require(msg.value >= bridgingFee);
+        require(feeGovernance != address(0));
+
+        _transferBridgingFee(msg.value);
 
         uint8 decimal = 0;
         if(token == tetherAddress){
             TIERC20(token).transferFrom(msg.sender, address(this), amount);
             decimal = TIERC20(token).decimals();
-        }else{
+        }
+        else{
             if(!IERC20(token).transferFrom(msg.sender, address(this), amount)) revert();
             decimal = IERC20(token).decimals();
         }
@@ -162,6 +181,13 @@ contract EthVaultImpl is EthVault, SafeMath{
         return validatorCount;
     }
 
+    function _transferBridgingFee(uint amount) private {
+        (bool result,) = feeGovernance.call.value(amount)("");
+        if(!result){
+            revert();
+        }
+    }
+
     function bytesToAddress(bytes memory bys) private pure returns (address payable addr) {
         assembly {
             addr := mload(add(bys,20))
@@ -169,5 +195,6 @@ contract EthVaultImpl is EthVault, SafeMath{
     }
 
     function () payable external{
+        revert();
     }
 }

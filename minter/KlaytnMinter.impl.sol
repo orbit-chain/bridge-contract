@@ -18,7 +18,7 @@ contract KlaytnMinterImpl is KlaytnMinter, SafeMath{
     }
 
     function getVersion() public pure returns(string memory){
-        return "1028";
+        return "20201117";
     }
 
     function getTokenAddress(bytes memory token) public view returns(address){
@@ -41,6 +41,15 @@ contract KlaytnMinterImpl is KlaytnMinter, SafeMath{
 
     function setGovId(bytes32 _govId) public onlyGovernance {
         govId = _govId;
+    }
+
+    function setBridgingFee(uint _bridgingFee) public onlyGovernance {
+        bridgingFee = _bridgingFee;
+    }
+
+    function setFeeGovernance(address payable _feeGovernance) public onlyGovernance {
+        require(_feeGovernance != address(0));
+        feeGovernance = _feeGovernance;
     }
 
     function addToken(bytes memory token, address tokenAddress) public onlyGovernance {
@@ -93,9 +102,14 @@ contract KlaytnMinterImpl is KlaytnMinter, SafeMath{
         emit Swap(hubContract, fromChain, chain, fromAddr, toAddr, tokenAddress, bytes32s, uints);
     }
 
-    function requestSwap(address tokenAddress, string memory toChain, bytes memory toAddr, uint amount) public onlyActivated {
+    function requestSwap(address tokenAddress, string memory toChain, bytes memory toAddr, uint amount) public payable onlyActivated {
         require(isValidChain[getChainId(toChain)]);
         require(tokenAddress != address(0));
+        require(amount > 0);
+        require(msg.value >= bridgingFee);
+        require(feeGovernance != address(0));
+
+        _transferBridgingFee(msg.value);
         
         bytes32 tokenSummary = tokenSummaries[tokenAddress];
         require(tokenSummaries[tokenAddress] != 0);
@@ -148,6 +162,13 @@ contract KlaytnMinterImpl is KlaytnMinter, SafeMath{
 
     function deployToken(uint decimals) private returns(address){
         return address(new KlaytnToken(governance, address(this), uint8(decimals)));
+    }
+
+    function _transferBridgingFee(uint amount) private {
+        (bool result,) = feeGovernance.call.value(amount)("");
+        if(!result){
+            revert();
+        }
     }
 
     function bytesToAddress(bytes memory bys) private pure returns (address addr) {
