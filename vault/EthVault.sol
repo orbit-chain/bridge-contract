@@ -19,9 +19,6 @@ contract EthVault is MultiSigWallet{
 
     mapping(bytes32 => bool) public isValidChain;
 
-    uint public bridgingFee = 0;
-    address payable public feeGovernance;
-
     constructor(address[] memory _owners, uint _required, address payable _implementation, address _tetherAddress) MultiSigWallet(_owners, _required) public {
         implementation = _implementation;
         tetherAddress = _tetherAddress;

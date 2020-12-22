@@ -6,6 +6,9 @@ import "../token/KlaytnToken.sol";
 import "./KlaytnMinter.sol";
 
 contract KlaytnMinterImpl is KlaytnMinter, SafeMath{
+    uint public bridgingFee = 0;
+    address payable public feeGovernance;
+
     event Swap(address hubContract, string fromChain, string toChain, bytes fromAddr, bytes toAddr, address tokenAddress, bytes32[] bytes32s, uint[] uints);
     event SwapRequest(string fromChain, string toChain, address fromAddr, bytes toAddr, bytes token, address tokenAddress, uint8 decimal, uint amount, uint depositId, uint block);
 
@@ -18,7 +21,7 @@ contract KlaytnMinterImpl is KlaytnMinter, SafeMath{
     }
 
     function getVersion() public pure returns(string memory){
-        return "20201117";
+        return "20201221";
     }
 
     function getTokenAddress(bytes memory token) public view returns(address){

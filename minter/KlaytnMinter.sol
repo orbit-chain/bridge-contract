@@ -20,9 +20,6 @@ contract KlaytnMinter is Owned {
 
     bytes32 public govId;
 
-    uint public bridgingFee = 0;
-    address payable public feeGovernance;
-
     constructor(address multisigAddr, address payable _implementation, bytes32 _govId) public {
         governance = multisigAddr;
         implementation = _implementation;

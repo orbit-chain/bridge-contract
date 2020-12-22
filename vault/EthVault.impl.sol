@@ -37,6 +37,9 @@ contract TIERC20 {
 }
 
 contract EthVaultImpl is EthVault, SafeMath{
+    uint public bridgingFee = 0;
+    address payable public feeGovernance;
+
     event Deposit(string fromChain, string toChain, address fromAddr, bytes toAddr, address token, uint8 decimal, uint amount, uint depositId, uint block);
     event Withdraw(address hubContract, string fromChain, string toChain, bytes fromAddr, bytes toAddr, bytes token, bytes32[] bytes32s, uint[] uints);
 
@@ -49,7 +52,7 @@ contract EthVaultImpl is EthVault, SafeMath{
     }
 
     function getVersion() public pure returns(string memory){
-        return "20201209";
+        return "20201221";
     }
 
     function changeActivate(bool activate) public onlyWallet {
