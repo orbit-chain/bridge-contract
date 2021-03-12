@@ -1,8 +1,8 @@
-pragma solidity ^0.5.0;
+pragma solidity 0.5.0;
 
 import "../multisig/MessageMultiSigWallet.sol";
 import "../utils/SafeMath.sol";
-import "./KlaytnMinter.sol";
+import "./OrbitMinter.sol";
 import "../token/standard/IKIP7.sol";
 import "../token/standard/IKIP17.sol";
 
@@ -16,34 +16,40 @@ interface OrbitBridgeReceiver {
 	function onNFTBridgeReceived(address _token, uint256 _tokenId, bytes calldata _data) external returns(uint);
 }
 
-contract KlaytnMinterImpl is KlaytnMinter, SafeMath {
-    uint public bridgingFee = 0;
-    address payable public feeGovernance;
+interface OrbitHubLike {
+    function getBridgeContract(string calldata) external view returns(address);
+    function getBridgeMig(string calldata, bytes32) external view returns(address);
+}
 
-    uint public taxRate;
-    address public taxReceiver;
-    address public tokenDeployer;
-    
+contract OrbitMinterImpl is OrbitMinter, SafeMath {
     uint public bridgingFeeWithData;
     uint public gasLimitForBridgeReceiver;
-
+    
     event Swap(string fromChain, bytes fromAddr, bytes toAddr, address tokenAddress, bytes32[] bytes32s, uint[] uints, bytes data);
     event SwapNFT(string fromChain, bytes fromAddr, bytes toAddr, address tokenAddress, bytes32[] bytes32s, uint[] uints, bytes data);
 
     event SwapRequest(string toChain, address fromAddr, bytes toAddr, bytes token, address tokenAddress, uint8 decimal, uint amount, uint depositId, bytes data);
     event SwapRequestNFT(string toChain, address fromAddr, bytes toAddr, bytes token, address tokenAddress, uint tokenId, uint amount, uint depositId, bytes data);
+
     event BridgeReceiverResult(bool success, bytes fromAddr, address tokenAddress, bytes data);
     
+    event TaxPay(address fromAddr, address taxAddr, address tokenAddr, uint amount, uint tax);
+
     modifier onlyActivated {
         require(isActivated);
         _;
     }
 
-    constructor() public KlaytnMinter(address(0), address(0), 0) {
+    modifier onlyBridgeContract {
+        require(msg.sender == OrbitHubLike(hubContract).getBridgeContract(chain));
+        _;
+    }
+
+    constructor() public OrbitMinter(address(0), address(0), 0) {
     }
 
     function getVersion() public pure returns(string memory){
-        return "20210303";
+        return "20210305";
     }
 
     function getTokenAddress(bytes memory token) public view returns(address){
@@ -73,6 +79,10 @@ contract KlaytnMinterImpl is KlaytnMinter, SafeMath {
         gasLimitForBridgeReceiver = _gasLimitForBridgeReceiver;
     }
 
+    function setFeeTokenAddress(address _feeTokenAddress) public onlyGovernance {
+        feeTokenAddress = _feeTokenAddress;
+    }
+
     function setFeeGovernance(address payable _feeGovernance) public onlyGovernance {
         require(_feeGovernance != address(0));
         feeGovernance = _feeGovernance;
@@ -93,6 +103,11 @@ contract KlaytnMinterImpl is KlaytnMinter, SafeMath {
         tokenDeployer = _deployer;
     }
 
+    function setHubContract(address _hubContract) public onlyGovernance {
+        require(_hubContract != address(0));
+        hubContract = _hubContract;
+    }
+
     function addToken(bytes memory token, address tokenAddress) public onlyGovernance {
         require(tokenSummaries[tokenAddress] == 0);
 
@@ -107,30 +122,17 @@ contract KlaytnMinterImpl is KlaytnMinter, SafeMath {
     // Fix Data Info
     ///@param bytes32s [0]:govId, [1]:txHash
     ///@param uints [0]:amount, [1]:decimals
-    function swap(
-        address hubContract,
-        string memory fromChain,
-        bytes memory fromAddr,
-        bytes memory toAddr,
-        bytes memory token,
-        bytes32[] memory bytes32s,
-        uint[] memory uints,
-        bytes memory data,
-        uint8[] memory v,
-        bytes32[] memory r,
-        bytes32[] memory s
-    ) public onlyActivated {
-        require(bytes32s.length >= 1);
+    function swap(string memory fromChain, bytes memory fromAddr, bytes memory toAddr, bytes memory token, bytes32[] memory bytes32s, uint[] memory uints, bytes memory data) public onlyBridgeContract {
         require(bytes32s[0] == govId);
+        require(bytes32s.length >= 1);
         require(uints.length >= 2);
 
         bytes32 hash = sha256(abi.encodePacked(hubContract, fromChain, chain, fromAddr, toAddr, token, bytes32s, uints, data));
-
         require(!isConfirmed[hash]);
         isConfirmed[hash] = true;
 
-        uint validatorCount = _validate(hash, v, r, s);
-        require(validatorCount >= MessageMultiSigWallet(governance).required());
+        (uint validatorCount, uint requireCount) = _validate(hash);
+        require(validatorCount >= requireCount);
 
         address tokenAddress = getTokenAddress(token, uints[1]);
         if(tokenAddress == address(0)){
@@ -158,30 +160,17 @@ contract KlaytnMinterImpl is KlaytnMinter, SafeMath {
     // Fix Data Info
     ///@param bytes32s [0]:govId, [1]:txHash
     ///@param uints [0]:amount, [1]:tokenId
-    function swapNFT(
-        address hubContract,
-        string memory fromChain,
-        bytes memory fromAddr,
-        bytes memory toAddr,
-        bytes memory token,
-        bytes32[] memory bytes32s,
-        uint[] memory uints,
-        bytes memory data,
-        uint8[] memory v,
-        bytes32[] memory r,
-        bytes32[] memory s
-    ) public onlyActivated {
+    function swapNFT(string memory fromChain, bytes memory fromAddr, bytes memory toAddr, bytes memory token, bytes32[] memory bytes32s, uint[] memory uints, bytes memory data) public onlyBridgeContract {
         require(bytes32s.length >= 1);
         require(bytes32s[0] == govId);
         require(uints.length >= 2);
 
         bytes32 hash = sha256(abi.encodePacked("NFT", hubContract, fromChain, chain, fromAddr, toAddr, token, bytes32s, uints, data));
-
         require(!isConfirmed[hash]);
         isConfirmed[hash] = true;
 
-        uint validatorCount = _validate(hash, v, r, s);
-        require(validatorCount >= MessageMultiSigWallet(governance).required());
+        (uint validatorCount, uint requireCount) = _validate(hash);
+        require(validatorCount >= requireCount);
 
         address nftAddress = getNFTAddress(token);
         if(nftAddress == address(0)){
@@ -206,24 +195,21 @@ contract KlaytnMinterImpl is KlaytnMinter, SafeMath {
 
         emit SwapNFT(fromChain, fromAddr, toAddr, nftAddress, bytes32s, uints, data);
     }
-    
-    function requestSwap(address tokenAddress, string memory toChain, bytes memory toAddr, uint amount) public payable onlyActivated {
-        require(msg.value >= bridgingFee);
-        _requestSwap(tokenAddress, toChain, toAddr, amount, "");
-    }
-    
-    function requestSwap(address tokenAddress, string memory toChain, bytes memory toAddr, uint amount, bytes memory data) public payable onlyActivated {
-        require(msg.value >= bridgingFeeWithData);
-        require(data.length != 0);
-        _requestSwap(tokenAddress, toChain, toAddr, amount, data);
+
+    function requestSwap(address tokenAddress, string memory toChain, bytes memory toAddr, uint amount) public {
+        _requestSwap(tokenAddress, toChain, toAddr, amount, "", bridgingFee);
     }
 
-    function _requestSwap(address tokenAddress, string memory toChain, bytes memory toAddr, uint amount, bytes memory data) private {
+    function requestSwap(address tokenAddress, string memory toChain, bytes memory toAddr, uint amount, bytes memory data) public {
+        require(data.length != 0);
+        _requestSwap(tokenAddress, toChain, toAddr, amount, data, bridgingFeeWithData);
+    }
+
+    function _requestSwap(address tokenAddress, string memory toChain, bytes memory toAddr, uint amount, bytes memory data, uint feeAmount) private onlyActivated {
         require(isValidChain[getChainId(toChain)]);
         require(tokenAddress != address(0));
-        require(amount > 0);
 
-        _transferBridgingFee(msg.value);
+        _transferBridgingFee(feeAmount);
 
         bytes32 tokenSummary = tokenSummaries[tokenAddress];
         require(tokenSummaries[tokenAddress] != 0);
@@ -237,7 +223,7 @@ contract KlaytnMinterImpl is KlaytnMinter, SafeMath {
         require(decimal > 0);
 
         if(taxRate > 0 && taxReceiver != address(0)){
-            uint tax = _payTax(token, tokenAddress, amount, decimal);
+            uint tax = _payTax(tokenAddress, amount);
             amount = safeSub(amount, tax);
         }
 
@@ -245,22 +231,20 @@ contract KlaytnMinterImpl is KlaytnMinter, SafeMath {
         emit SwapRequest(toChain, msg.sender, toAddr, token, tokenAddress, decimal, amount, depositCount, data);
     }
 
-    function requestSwapNFT(address nftAddress, uint tokenId, string memory toChain, bytes memory toAddr) public payable onlyActivated {
-        require(msg.value >= bridgingFee);
-        _requestSwapNFT(nftAddress, tokenId, toChain, toAddr, "");
+    function requestSwapNFT(address nftAddress, uint tokenId, string memory toChain, bytes memory toAddr) public {
+        _requestSwapNFT(nftAddress, tokenId, toChain, toAddr, "", bridgingFee);
     }
     
-    function requestSwapNFT(address nftAddress, uint tokenId, string memory toChain, bytes memory toAddr, bytes memory data) public payable onlyActivated {
-        require(msg.value >= bridgingFeeWithData);
+    function requestSwapNFT(address nftAddress, uint tokenId, string memory toChain, bytes memory toAddr, bytes memory data) public {
         require(data.length != 0);
-        _requestSwapNFT(nftAddress, tokenId, toChain, toAddr, data);
+        _requestSwapNFT(nftAddress, tokenId, toChain, toAddr, data, bridgingFeeWithData);
     }
 
-    function _requestSwapNFT(address nftAddress, uint tokenId, string memory toChain, bytes memory toAddr, bytes memory data) private {
+    function _requestSwapNFT(address nftAddress, uint tokenId, string memory toChain, bytes memory toAddr, bytes memory data, uint feeAmount) private onlyActivated {
         require(isValidChain[getChainId(toChain)]);
         require(nftAddress != address(0));
 
-        _transferBridgingFee(msg.value);
+        _transferBridgingFee(feeAmount);
 
         bytes32 tokenSummary = tokenSummaries[nftAddress];
         require(tokenSummaries[nftAddress] != 0);
@@ -275,26 +259,10 @@ contract KlaytnMinterImpl is KlaytnMinter, SafeMath {
         emit SwapRequestNFT(toChain, msg.sender, toAddr, token, nftAddress, tokenId, 1, depositCount, data);
     }
 
-    function _validate(bytes32 whash, uint8[] memory v, bytes32[] memory r, bytes32[] memory s) private view returns(uint){
-        uint validatorCount = 0;
-        address[] memory vaList = new address[](MessageMultiSigWallet(governance).getOwners().length);
-
-        uint i=0;
-        uint j=0;
-
-        for(i; i<v.length; i++){
-            address va = ecrecover(whash,v[i],r[i],s[i]);
-            if(MessageMultiSigWallet(governance).isOwner(va)){
-                for(j=0; j<validatorCount; j++){
-                    require(vaList[j] != va);
-                }
-
-                vaList[validatorCount] = va;
-                validatorCount += 1;
-            }
-        }
-
-        return validatorCount;
+    function _validate(bytes32 hash) private view returns(uint, uint) {
+        address bridgeMig = OrbitHubLike(hubContract).getBridgeMig(chain, govId);
+        MessageMultiSigWallet mig = MessageMultiSigWallet(bridgeMig);
+        return (mig.validateCount(hash), mig.required());
     }
 
     function getTokenAddress(bytes memory token, uint decimals) private returns(address tokenAddress){
@@ -323,21 +291,24 @@ contract KlaytnMinterImpl is KlaytnMinter, SafeMath {
         }
     }
 
-    function _transferBridgingFee(uint amount) private {
-        require(feeGovernance != address(0));
-
-        (bool result,) = feeGovernance.call.value(amount)("");
-        if(!result){
-            revert();
+    function _transferBridgingFee(uint feeAmount) private {
+        if (feeTokenAddress == address(0)) {
+            return;
         }
+        
+        if (feeGovernance == address(0)) {
+            return;
+        }
+        
+        if(!IKIP7(feeTokenAddress).transferFrom(msg.sender, feeGovernance, feeAmount)) revert();
     }
 
-    function _payTax(bytes memory token, address tokenAddress, uint amount, uint8 decimal) private returns (uint tax) {
+    function _payTax(address tokenAddress, uint amount) private returns (uint tax) {
         tax = safeDiv(safeMul(amount, taxRate), 10000);
         if(tax > 0){
-            depositCount = depositCount + 1;
-            emit SwapRequest("ORBIT", msg.sender, abi.encodePacked(taxReceiver), token, tokenAddress, decimal, tax, depositCount, "");
+            if(!IKIP7(tokenAddress).transferFrom(msg.sender, taxReceiver, tax)) revert();
         }
+        emit TaxPay(msg.sender, taxReceiver, tokenAddress, amount, tax);
     }
 
     function isContract(address _addr) private view returns (bool){
@@ -358,7 +329,7 @@ contract KlaytnMinterImpl is KlaytnMinter, SafeMath {
         isValidChain[getChainId(_chain)] = valid;
     }
 
-    function () payable external{
+    function () payable external {
         revert();
     }
 }
