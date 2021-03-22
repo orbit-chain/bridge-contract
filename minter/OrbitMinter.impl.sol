@@ -49,7 +49,7 @@ contract OrbitMinterImpl is OrbitMinter, SafeMath {
     }
 
     function getVersion() public pure returns(string memory){
-        return "20210305";
+        return "20210322";
     }
 
     function getTokenAddress(bytes memory token) public view returns(address){
@@ -260,8 +260,7 @@ contract OrbitMinterImpl is OrbitMinter, SafeMath {
     }
 
     function _validate(bytes32 hash) private view returns(uint, uint) {
-        address bridgeMig = OrbitHubLike(hubContract).getBridgeMig(chain, govId);
-        MessageMultiSigWallet mig = MessageMultiSigWallet(bridgeMig);
+        MessageMultiSigWallet mig = MessageMultiSigWallet(governance);
         return (mig.validateCount(hash), mig.required());
     }
 
