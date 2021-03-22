@@ -59,7 +59,7 @@ contract KIP17 is KIP13, IKIP17 {
     }
 
     function _version() public view returns(string memory name, string memory version) {
-        return (_name, "20210122");
+        return (_name, "20210319");
     }
 
     function name() external view returns (string memory) {
@@ -147,7 +147,7 @@ contract KIP17 is KIP13, IKIP17 {
 
         if (bytes(_tokenURIs[tokenId]).length != 0) {
             delete _tokenURIs[tokenId];
-            tokenURIInitialized[tokenId] = true;
+            tokenURIInitialized[tokenId] = false;
         }
 
         emit Transfer(owner, address(0), tokenId);
