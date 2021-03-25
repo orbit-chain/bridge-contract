@@ -49,7 +49,7 @@ contract OrbitMinterImpl is OrbitMinter, SafeMath {
     }
 
     function getVersion() public pure returns(string memory){
-        return "20210322";
+        return "20210325";
     }
 
     function getTokenAddress(bytes memory token) public view returns(address){
@@ -305,9 +305,9 @@ contract OrbitMinterImpl is OrbitMinter, SafeMath {
     function _payTax(address tokenAddress, uint amount) private returns (uint tax) {
         tax = safeDiv(safeMul(amount, taxRate), 10000);
         if(tax > 0){
-            if(!IKIP7(tokenAddress).transferFrom(msg.sender, taxReceiver, tax)) revert();
+            if(!IKIP7(tokenAddress).transfer(taxReceiver, tax)) revert();
+            emit TaxPay(msg.sender, taxReceiver, tokenAddress, amount, tax);
         }
-        emit TaxPay(msg.sender, taxReceiver, tokenAddress, amount, tax);
     }
 
     function isContract(address _addr) private view returns (bool){
