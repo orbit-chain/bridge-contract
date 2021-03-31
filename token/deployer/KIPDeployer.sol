@@ -51,6 +51,15 @@ contract DeployerImpl is Deployer {
         _;
     }
 
+    function getVersion() public pure returns(string memory) {
+        return "20210326";
+    }
+
+    function setOwner(address _owner) public onlyOwner {
+        require(_owner != address(0));
+        owner = _owner;
+    }
+
     function setMinter(address _minter) public onlyOwner {
         require(_minter != address(0));
         minter = _minter;
@@ -58,11 +67,11 @@ contract DeployerImpl is Deployer {
 
     function deployToken(uint8 decimals) public onlyMinter returns (address){
         string memory name = string(abi.encodePacked("Orbit Bridge ", chain, " Token"));
-        return address(new KIP7(owner, minter, name, "OBT", decimals));
+        return address(new KIP7(minter, minter, name, "OBT", decimals));
     }
 
     function deployNFT() public onlyMinter returns (address){
         string memory name = string(abi.encodePacked("Orbit Bridge ", chain, " NFT"));
-        return address(new KIP17(owner, minter, name, "OBN"));
+        return address(new KIP17(minter, minter, name, "OBN"));
     }
 }
