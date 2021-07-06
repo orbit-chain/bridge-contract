@@ -100,22 +100,27 @@ library LibTokenManager {
 }
 
 library LibCallBridgeReceiver {
-    event BridgeReceiverResult(bool success, address fromAddress, address tokenAddress, bytes data);
-    
-    function callReceiver(bool isFungible, uint gasLimitForBridgeReceiver, address tokenAddress, uint256 _int, bytes memory data, address toAddr, address fromAddr) public {
+    function callReceiver(bool isFungible, uint gasLimitForBridgeReceiver, address tokenAddress, uint256 _int, bytes memory data, address toAddr) internal returns (bool){
         bool result;
         bytes memory callbytes;
+        bytes memory returnbytes;
         if (isFungible) {
             callbytes = abi.encodeWithSignature("onTokenBridgeReceived(address,uint256,bytes)", tokenAddress, _int, data);
         } else {
             callbytes = abi.encodeWithSignature("onNFTBridgeReceived(address,uint256,bytes)", tokenAddress, _int, data);
         }
         if (gasLimitForBridgeReceiver > 0) {
-            (result, ) = toAddr.call.gas(gasLimitForBridgeReceiver)(callbytes);
+            (result, returnbytes) = toAddr.call.gas(gasLimitForBridgeReceiver)(callbytes);
         } else {
-            (result, ) = toAddr.call(callbytes);
+            (result, returnbytes) = toAddr.call(callbytes);
         }
-        emit BridgeReceiverResult(result, fromAddr, tokenAddress, data);
+
+        if(!result){
+            return false;
+        } else {
+            (uint flag) = abi.decode(returnbytes, (uint));
+            return flag > 0;
+        }
     }
 }
 
@@ -136,7 +141,7 @@ contract EthVaultImpl is EthVault, SafeMath{
     event Withdraw(string fromChain, bytes fromAddr, bytes toAddr, bytes token, bytes32[] bytes32s, uint[] uints, bytes data);
     event WithdrawNFT(string fromChain, bytes fromAddr, bytes toAddr, bytes token, bytes32[] bytes32s, uint[] uints, bytes data);
 
-    event BridgeReceiverResult(bool success, address fromAddress, address tokenAddress, bytes data);
+    event BridgeReceiverResult(bool success, bytes fromAddress, address tokenAddress, bytes data);
     
     modifier onlyActivated {
         require(isActivated);
@@ -147,7 +152,7 @@ contract EthVaultImpl is EthVault, SafeMath{
     }
 
     function getVersion() public pure returns(string memory){
-        return "20210310";
+        return "EthVault20210705";
     }
 
     function changeActivate(bool activate) public onlyWallet {
@@ -226,10 +231,12 @@ contract EthVaultImpl is EthVault, SafeMath{
     }
     
     function depositToken(address token, string memory toChain, bytes memory toAddr, uint amount) public {
+        require(token != address(0));
         _depositToken(token, toChain, toAddr, amount, "");
     }
 
     function depositToken(address token, string memory toChain, bytes memory toAddr, uint amount, bytes memory data) public {
+        require(token != address(0));
         require(data.length != 0);
         _depositToken(token, toChain, toAddr, amount, data);
     }
@@ -307,8 +314,8 @@ contract EthVaultImpl is EthVault, SafeMath{
         }
 
         if(isContract(_toAddr) && data.length != 0){
-            address _from = bytesToAddress(fromAddr);
-            LibCallBridgeReceiver.callReceiver(true, gasLimitForBridgeReceiver, tokenAddress, uints[0], data, _toAddr, _from);
+            bool result = LibCallBridgeReceiver.callReceiver(true, gasLimitForBridgeReceiver, tokenAddress, uints[0], data, _toAddr);
+            emit BridgeReceiverResult(result, fromAddr, tokenAddress, data);
         }
 
         emit Withdraw(fromChain, fromAddr, toAddr, token, bytes32s, uints, data);
@@ -351,8 +358,8 @@ contract EthVaultImpl is EthVault, SafeMath{
         require(IERC721(tokenAddress).ownerOf(uints[1]) == _toAddr);
 
         if(isContract(_toAddr) && data.length != 0){
-            address _from = bytesToAddress(fromAddr);
-            LibCallBridgeReceiver.callReceiver(false, gasLimitForBridgeReceiver, tokenAddress, uints[1], data, _toAddr, _from);
+            bool result = LibCallBridgeReceiver.callReceiver(false, gasLimitForBridgeReceiver, tokenAddress, uints[1], data, _toAddr);
+            emit BridgeReceiverResult(result, fromAddr, tokenAddress, data);
         }
         
         emit WithdrawNFT(fromChain, fromAddr, toAddr, token, bytes32s, uints, data);

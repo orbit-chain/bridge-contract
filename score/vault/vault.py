@@ -137,6 +137,10 @@ class IconVaultContract(IconScoreBase):
         return self._governance.get()
 
     @external(readonly=True)
+    def getVersion(self) -> str:
+        return "IconVault20210705"
+
+    @external(readonly=True)
     def feeGovernance(self) -> Address:
         return self._fee_governance.get()
 
@@ -282,6 +286,7 @@ class IconVaultContract(IconScoreBase):
     def depositToken(self, token: Address, toChain:str, toAddr: bytes, amount: int, data: bytes = None):
         fee = self._bridging_fee.get()
         self.require(self.msg.value >= fee, "Error: Not enough bridging fee")
+        self.require(token != ICX_ADDR, "Error: invalid token address")
         if fee != 0 :
             self.require(self._transferBridgingFee(self.msg.value), "Error: Transfer Bridging Fee Fail")
         self._depositToken(token, toChain, toAddr, amount, data)

@@ -230,22 +230,27 @@ interface IProxy {
 }
 
 library LibCallBridgeReceiver {
-    event BridgeReceiverResult(bool success, address fromAddress, address tokenAddress, bytes data);
-    
-    function callReceiver(bool isFungible, uint gasLimitForBridgeReceiver, address tokenAddress, uint256 _int, bytes memory data, address toAddr, address fromAddr) internal {
+    function callReceiver(bool isFungible, uint gasLimitForBridgeReceiver, address tokenAddress, uint256 _int, bytes memory data, address toAddr) internal returns (bool){
         bool result;
         bytes memory callbytes;
+        bytes memory returnbytes;
         if (isFungible) {
             callbytes = abi.encodeWithSignature("onTokenBridgeReceived(address,uint256,bytes)", tokenAddress, _int, data);
         } else {
             callbytes = abi.encodeWithSignature("onNFTBridgeReceived(address,uint256,bytes)", tokenAddress, _int, data);
         }
         if (gasLimitForBridgeReceiver > 0) {
-            (result, ) = toAddr.call{gas : gasLimitForBridgeReceiver}(callbytes);
+            (result, returnbytes) = toAddr.call{gas : gasLimitForBridgeReceiver}(callbytes);
         } else {
-            (result, ) = toAddr.call(callbytes);
+            (result, returnbytes) = toAddr.call(callbytes);
         }
-        emit BridgeReceiverResult(result, fromAddr, tokenAddress, data);
+
+        if(!result){
+            return false;
+        } else {
+            (uint flag) = abi.decode(returnbytes, (uint));
+            return flag > 0;
+        }
     }
 }
 
@@ -259,15 +264,14 @@ contract BscVaultImpl is VaultStorage {
     event Withdraw(string fromChain, bytes fromAddr, bytes toAddr, bytes token, bytes32[] bytes32s, uint[] uints, bytes data);
     event WithdrawNFT(string fromChain, bytes fromAddr, bytes toAddr, bytes token, bytes32[] bytes32s, uint[] uints, bytes data);
 
-    event BridgeReceiverResult(bool success, address fromAddress, address tokenAddress, bytes data);
+    event BridgeReceiverResult(bool success, bytes fromAddress, address tokenAddress, bytes data);
     
     constructor() public payable {
     }
     
     modifier onlyGovernance {
-        if (msg.sender == governance_()) {
-            _;
-        }
+        require(msg.sender == governance_());
+        _;
     }
 
     modifier onlyActivated {
@@ -284,7 +288,7 @@ contract BscVaultImpl is VaultStorage {
     }
 
     function getVersion() public pure returns(string memory){
-        return "BscVault20210506";
+        return "BscVault20210705";
     }
 
     function setChainSymbol(string memory _chain) public onlyGovernance {
@@ -359,10 +363,12 @@ contract BscVaultImpl is VaultStorage {
     }
     
     function depositToken(address token, string memory toChain, bytes memory toAddr, uint amount) public {
+        require(token != address(0));
         _depositToken(token, toChain, toAddr, amount, "");
     }
 
     function depositToken(address token, string memory toChain, bytes memory toAddr, uint amount, bytes memory data) public {
+        require(token != address(0));
         require(data.length != 0);
         _depositToken(token, toChain, toAddr, amount, data);
     }
@@ -457,8 +463,8 @@ contract BscVaultImpl is VaultStorage {
         }
 
         if(isContract(_toAddr) && data.length != 0){
-            address _from = bytesToAddress(fromAddr);
-            LibCallBridgeReceiver.callReceiver(true, gasLimitForBridgeReceiver, tokenAddress, uints[0], data, _toAddr, _from);
+            bool result = LibCallBridgeReceiver.callReceiver(true, gasLimitForBridgeReceiver, tokenAddress, uints[0], data, _toAddr);
+            emit BridgeReceiverResult(result, fromAddr, tokenAddress, data);
         }
 
         emit Withdraw(fromChain, fromAddr, toAddr, token, bytes32s, uints, data);
@@ -501,8 +507,8 @@ contract BscVaultImpl is VaultStorage {
         require(IERC721(tokenAddress).ownerOf(uints[1]) == _toAddr);
 
         if(isContract(_toAddr) && data.length != 0){
-            address _from = bytesToAddress(fromAddr);
-            LibCallBridgeReceiver.callReceiver(false, gasLimitForBridgeReceiver, tokenAddress, uints[1], data, _toAddr, _from);
+            bool result = LibCallBridgeReceiver.callReceiver(false, gasLimitForBridgeReceiver, tokenAddress, uints[1], data, _toAddr);
+            emit BridgeReceiverResult(result, fromAddr, tokenAddress, data);
         }
         
         emit WithdrawNFT(fromChain, fromAddr, toAddr, token, bytes32s, uints, data);
