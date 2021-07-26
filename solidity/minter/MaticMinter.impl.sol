@@ -9,12 +9,12 @@ library SafeMath {
         if (c < a) return (false, 0);
         return (true, c);
     }
-    
+
     function trySub(uint256 a, uint256 b) internal pure returns (bool, uint256) {
         if (b > a) return (false, 0);
         return (true, a - b);
     }
-    
+
     function tryMul(uint256 a, uint256 b) internal pure returns (bool, uint256) {
         if (a == 0) return (true, 0);
         uint256 c = a * b;
@@ -92,7 +92,7 @@ library Address {
     }
 
     function functionCall(address target, bytes memory data) internal returns (bytes memory) {
-      return functionCall(target, data, "Address: low-level call failed");
+        return functionCall(target, data, "Address: low-level call failed");
     }
 
     function functionCall(address target, bytes memory data, string memory errorMessage) internal returns (bytes memory) {
@@ -172,8 +172,8 @@ library SafeERC20 {
 
     function safeApprove(IERC20 token, address spender, uint256 value) internal {
         require((value == 0) || (token.allowance(address(this), spender) == 0),
-            "SafeERC20: approve from non-zero to non-zero allowance"
-        );
+                "SafeERC20: approve from non-zero to non-zero allowance"
+               );
         _callOptionalReturn(token, abi.encodeWithSelector(token.approve.selector, spender, value));
     }
 
@@ -249,7 +249,7 @@ interface Deployer {
 
 interface OrbitBridgeReceiver {
     function onTokenBridgeReceived(address _token, uint256 _value, bytes calldata _data) external returns(uint);
-	function onNFTBridgeReceived(address _token, uint256 _tokenId, bytes calldata _data) external returns(uint);
+    function onNFTBridgeReceived(address _token, uint256 _tokenId, bytes calldata _data) external returns(uint);
 }
 
 contract MaticMinterImpl is MinterStorage {
@@ -275,6 +275,11 @@ contract MaticMinterImpl is MinterStorage {
         _;
     }
 
+    modifier onlyPolicyAdmin {
+        require(msg.sender == policyAdmin);
+        _;
+    }
+
     function admin_() internal view returns (address) {
         return IProxy(address(this)).getAdmin();
     }
@@ -284,7 +289,7 @@ contract MaticMinterImpl is MinterStorage {
     }
 
     function getVersion() public pure returns(string memory){
-        return "MaticMinter20210628";
+        return "MaticMinter20210726";
     }
 
     function getTokenAddress(bytes memory token) public view returns(address){
@@ -300,27 +305,12 @@ contract MaticMinterImpl is MinterStorage {
         chain = _chain;
     }
 
-    function changeActivate(bool activate) public onlyGovernance {
-        isActivated = activate;
-    }
-
     function setValidChain(string memory chainSymbol, bool valid) public onlyGovernance {
         isValidChain[getChainId(chainSymbol)] = valid;
     }
 
     function setGovId(bytes32 _govId) public onlyGovernance {
         govId = _govId;
-    }
-
-    function setBridgingParams(uint _bridgingFee, uint _bridgingFeeWithData, uint _gasLimitForBridgeReceiver) public onlyGovernance {
-        bridgingFee = _bridgingFee;
-        bridgingFeeWithData = _bridgingFeeWithData;
-        gasLimitForBridgeReceiver = _gasLimitForBridgeReceiver;
-    }
-
-    function setFeeGovernance(address payable _feeGovernance) public onlyGovernance {
-        require(_feeGovernance != address(0));
-        feeGovernance = _feeGovernance;
     }
 
     function setTaxRate(uint _taxRate) public onlyGovernance {
@@ -338,15 +328,36 @@ contract MaticMinterImpl is MinterStorage {
         tokenDeployer = _deployer;
     }
 
-    function setMinRequestSwapAmount(address _token, uint amount) public onlyGovernance {
+    function setPolicyAdmin(address _policyAdmin) public onlyGovernance {
+        require(_policyAdmin != address(0));
+        policyAdmin = _policyAdmin;
+    }
+
+    function changeActivate(bool activate) public onlyPolicyAdmin {
+        isActivated = activate;
+    }
+
+    function setMinRequestSwapAmount(address _token, uint amount) public onlyPolicyAdmin {
         require(_token != address(0));
         require(tokenSummaries[_token] != 0);
         minRequestAmount[_token] = amount;
     }
 
-    function setTokenOperator(address _tokenOperator) public onlyGovernance {
-        require(_tokenOperator != address(0));
-        tokenOperator = _tokenOperator;
+    function setChainFee(string memory chainSymbol, uint256 _fee, uint256 _feeWithData) public onlyPolicyAdmin {
+        bytes32 chainId = getChainId(chainSymbol);
+        require(isValidChain[chainId]);
+
+        chainFee[chainId] = _fee;
+        chainFeeWithData[chainId] = _feeWithData;
+    }
+
+    function setFeeGovernance(address payable _feeGovernance) public onlyGovernance {
+        require(_feeGovernance != address(0));
+        feeGovernance = _feeGovernance;
+    }
+
+    function setGasLimitForBridgeReceiver(uint256 _gasLimitForBridgeReceiver) public onlyPolicyAdmin {
+        gasLimitForBridgeReceiver = _gasLimitForBridgeReceiver;
     }
 
     function addToken(bytes memory token, address tokenAddress) public onlyGovernance {
@@ -360,9 +371,7 @@ contract MaticMinterImpl is MinterStorage {
         tokenSummaries[tokenAddress] = tokenSummary;
     }
 
-    function addTokenWithDeploy(bool isFungible, bytes memory token, string memory name, string memory symbol, uint8 decimals) public {
-        require(msg.sender == tokenOperator);
-
+    function addTokenWithDeploy(bool isFungible, bytes memory token, string memory name, string memory symbol, uint8 decimals) public onlyPolicyAdmin {
         bytes32 tokenSummary = sha256(abi.encodePacked(chain, token));
         require(tokenAddr[tokenSummary] == address(0));
 
@@ -480,14 +489,14 @@ contract MaticMinterImpl is MinterStorage {
 
         emit SwapNFT(fromChain, fromAddr, toAddr, nftAddress, bytes32s, uints, data);
     }
-    
+
     function requestSwap(address tokenAddress, string memory toChain, bytes memory toAddr, uint amount) public payable onlyActivated {
-        require(msg.value >= bridgingFee);
+        require(msg.value >= chainFee[getChainId(toChain)]);
         _requestSwap(tokenAddress, toChain, toAddr, amount, "");
     }
-    
+
     function requestSwap(address tokenAddress, string memory toChain, bytes memory toAddr, uint amount, bytes memory data) public payable onlyActivated {
-        require(msg.value >= bridgingFeeWithData);
+        require(msg.value >= chainFeeWithData[getChainId(toChain)]);
         require(data.length != 0);
         _requestSwap(tokenAddress, toChain, toAddr, amount, data);
     }
@@ -521,12 +530,12 @@ contract MaticMinterImpl is MinterStorage {
     }
 
     function requestSwapNFT(address nftAddress, uint tokenId, string memory toChain, bytes memory toAddr) public payable onlyActivated {
-        require(msg.value >= bridgingFee);
+        require(msg.value >= chainFee[getChainId(toChain)]);
         _requestSwapNFT(nftAddress, tokenId, toChain, toAddr, "");
     }
-    
+
     function requestSwapNFT(address nftAddress, uint tokenId, string memory toChain, bytes memory toAddr, bytes memory data) public payable onlyActivated {
-        require(msg.value >= bridgingFeeWithData);
+        require(msg.value >= chainFeeWithData[getChainId(toChain)]);
         require(data.length != 0);
         _requestSwapNFT(nftAddress, tokenId, toChain, toAddr, data);
     }

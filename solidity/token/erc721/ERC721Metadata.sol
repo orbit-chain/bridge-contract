@@ -126,4 +126,9 @@ contract ERC721Metadata is Context, ERC165, ERC721, IERC721Metadata {
             delete _tokenURIs[tokenId];
         }
     }
+
+    function _setTokenInfo(string memory name_, string memory symbol_) internal {
+        _name = name_;
+        _symbol = symbol_;
+    }
 }

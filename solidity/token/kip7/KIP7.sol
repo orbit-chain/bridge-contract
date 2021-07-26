@@ -32,7 +32,7 @@ contract KIP7 is KIP13, IKIP7 {
     // --- Contracts & Constructor ---
     address public _minter;
 
-    bool public isInitialized = false;
+    bool public isInitialized;
 
     modifier onlyOwner {
         require(msg.sender == _owner);
@@ -44,16 +44,18 @@ contract KIP7 is KIP13, IKIP7 {
         _;
     }
 
-    constructor(address owner, address minter, string memory name, string memory symbol,  uint8 decimals) public {
+    constructor(address owner, address minter, string memory name, string memory symbol, uint8 decimals, bool init) public {
         _owner = owner;
         _minter = minter;
         _name = name;
         _symbol = symbol;
         _decimals = decimals;
+
+        isInitialized = init;
     }
 
     function _version() public view returns(string memory name, string memory version) {
-        return (_name, "20210122");
+        return (_name, "20210628");
     }
 
     function name() public view returns (string memory) {
