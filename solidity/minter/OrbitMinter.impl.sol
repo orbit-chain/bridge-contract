@@ -62,7 +62,7 @@ contract OrbitMinterImpl is OrbitMinter, SafeMath {
     }
 
     function getVersion() public pure returns(string memory){
-        return "OrbitMinter20210721";
+        return "OrbitMinter20210726";
     }
 
     function getTokenAddress(bytes memory token) public view returns(address){
@@ -129,7 +129,7 @@ contract OrbitMinterImpl is OrbitMinter, SafeMath {
         chainFeeWithData[chainId] = _feeWithData;
     }
 
-    function setFeeGovernance(address payable _feeGovernance) public onlyPolicyAdmin {
+    function setFeeGovernance(address payable _feeGovernance) public onlyGovernance {
         require(_feeGovernance != address(0));
         feeGovernance = _feeGovernance;
     }

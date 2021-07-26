@@ -293,7 +293,7 @@ contract BscVaultImpl is VaultStorage {
     }
 
     function getVersion() public pure returns(string memory){
-        return "BscVault20210722";
+        return "BscVault20210726";
     }
 
     function setChainSymbol(string memory _chain) public onlyGovernance {
@@ -325,7 +325,7 @@ contract BscVaultImpl is VaultStorage {
         isActivated = activate;
     }
 
-    function setFeeGovernance(address payable _feeGovernance) public onlyPolicyAdmin {
+    function setFeeGovernance(address payable _feeGovernance) public onlyGovernance {
         require(_feeGovernance != address(0));
 
         feeGovernance = _feeGovernance;

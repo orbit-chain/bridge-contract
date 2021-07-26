@@ -56,7 +56,7 @@ contract KlaytnMinterImpl is KlaytnMinter, SafeMath {
     }
 
     function getVersion() public pure returns(string memory){
-        return "KlaytnMinter20210721";
+        return "KlaytnMinter20210726";
     }
 
     function getTokenAddress(bytes memory token) public view returns(address){
@@ -114,7 +114,7 @@ contract KlaytnMinterImpl is KlaytnMinter, SafeMath {
         chainFeeWithData[chainId] = _feeWithData;
     }
 
-    function setFeeGovernance(address payable _feeGovernance) public onlyPolicyAdmin {
+    function setFeeGovernance(address payable _feeGovernance) public onlyGovernance {
         require(_feeGovernance != address(0));
         feeGovernance = _feeGovernance;
     }
@@ -149,6 +149,18 @@ contract KlaytnMinterImpl is KlaytnMinter, SafeMath {
         tokenAddr[tokenSummary] = tokenAddress;
         tokenSummaries[tokenAddress] = tokenSummary;
     }
+
+    /* migrate function for ETH Governance
+    function migrateNFT(address newAddr) public onlyPolicyAdmin {
+        address nft = 0x267bF10fF46b8039A23D7bc69b83fEe8948CE20E;
+        bytes32 tokenSummary = tokenSummaries[nft];
+        require(tokenSummary != 0);
+
+        tokenSummaries[nft] = 0;
+        tokenAddr[tokenSummary] = newAddr;
+        tokenSummaries[newAddr] = tokenSummary;
+    }
+    */
 
     // Fix Data Info
     ///@param bytes32s [0]:govId, [1]:txHash

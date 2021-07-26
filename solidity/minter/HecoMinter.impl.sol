@@ -289,7 +289,7 @@ contract HecoMinterImpl is MinterStorage {
     }
 
     function getVersion() public pure returns(string memory){
-        return "HecoMinter20210721A";
+        return "HecoMinter20210726";
     }
 
     function getTokenAddress(bytes memory token) public view returns(address){
@@ -351,7 +351,7 @@ contract HecoMinterImpl is MinterStorage {
         chainFeeWithData[chainId] = _feeWithData;
     }
 
-    function setFeeGovernance(address payable _feeGovernance) public onlyPolicyAdmin {
+    function setFeeGovernance(address payable _feeGovernance) public onlyGovernance {
         require(_feeGovernance != address(0));
         feeGovernance = _feeGovernance;
     }

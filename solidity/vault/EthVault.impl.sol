@@ -235,7 +235,7 @@ contract EthVaultImpl is EthVaultStorage {
     constructor() public payable { }
 
     function getVersion() public pure returns(string memory){
-        return "EthVault20210721A";
+        return "EthVault20210726";
     }
 
     function getChainId(string memory _chain) public view returns(bytes32){
@@ -263,7 +263,7 @@ contract EthVaultImpl is EthVaultStorage {
         isActivated = activate;
     }
 
-    function setFeeGovernance(address payable _feeGovernance) public onlyPolicyAdmin {
+    function setFeeGovernance(address payable _feeGovernance) public onlyWallet {
         require(_feeGovernance != address(0));
 
         feeGovernance = _feeGovernance;
