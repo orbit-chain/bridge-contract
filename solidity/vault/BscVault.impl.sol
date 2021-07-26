@@ -265,10 +265,10 @@ contract BscVaultImpl is VaultStorage {
     event WithdrawNFT(string fromChain, bytes fromAddr, bytes toAddr, bytes token, bytes32[] bytes32s, uint[] uints, bytes data);
 
     event BridgeReceiverResult(bool success, bytes fromAddress, address tokenAddress, bytes data);
-    
+
     constructor() public payable {
     }
-    
+
     modifier onlyGovernance {
         require(msg.sender == governance_());
         _;
@@ -276,6 +276,11 @@ contract BscVaultImpl is VaultStorage {
 
     modifier onlyActivated {
         require(isActivated);
+        _;
+    }
+
+    modifier onlyPolicyAdmin {
+        require(msg.sender == policyAdmin);
         _;
     }
 
@@ -288,15 +293,11 @@ contract BscVaultImpl is VaultStorage {
     }
 
     function getVersion() public pure returns(string memory){
-        return "BscVault20210705";
+        return "BscVault20210722";
     }
 
     function setChainSymbol(string memory _chain) public onlyGovernance {
         chain = _chain;
-    }
-
-    function changeActivate(bool activate) public onlyGovernance {
-        isActivated = activate;
     }
 
     function getChainId(string memory chainSymbol) public view returns(bytes32){
@@ -307,11 +308,38 @@ contract BscVaultImpl is VaultStorage {
         isValidChain[getChainId(chainSymbol)] = valid;
     }
 
-    function setParams(uint _taxRate, address _taxReceiver, uint _gasLimitForBridgeReceiver) public onlyGovernance {
+    function setTaxParams(uint _taxRate, address _taxReceiver) public onlyGovernance {
         require(_taxRate < 10000);
         require(_taxReceiver != address(0));
         taxRate = _taxRate;
         taxReceiver = _taxReceiver;
+    }
+
+    function setPolicyAdmin(address _policyAdmin) public onlyGovernance {
+        require(_policyAdmin != address(0));
+
+        policyAdmin = _policyAdmin;
+    }
+
+    function changeActivate(bool activate) public onlyPolicyAdmin {
+        isActivated = activate;
+    }
+
+    function setFeeGovernance(address payable _feeGovernance) public onlyPolicyAdmin {
+        require(_feeGovernance != address(0));
+
+        feeGovernance = _feeGovernance;
+    }
+
+    function setChainFee(string memory chainSymbol, uint256 _fee, uint256 _feeWithData) public onlyPolicyAdmin {
+        bytes32 chainId = getChainId(chainSymbol);
+        require(isValidChain[chainId]);
+
+        chainFee[chainId] = _fee;
+        chainFeeWithData[chainId] = _feeWithData;
+    }
+
+    function setGasLimitForBridgeReceiver(uint256 _gasLimitForBridgeReceiver) public onlyPolicyAdmin {
         gasLimitForBridgeReceiver = _gasLimitForBridgeReceiver;
     }
 
@@ -325,7 +353,7 @@ contract BscVaultImpl is VaultStorage {
         else{
             amount = IERC20(token).balanceOf(address(this));
         }
-        
+
         _transferToken(token, proxy, amount);
         IFarm(proxy).deposit(amount);
 
@@ -352,24 +380,51 @@ contract BscVaultImpl is VaultStorage {
 
         farms[token] = newProxy;
     }
-    
+
     function deposit(string memory toChain, bytes memory toAddr) payable public {
-        _depositToken(address(0), toChain, toAddr, msg.value, "");
+        uint256 fee = chainFee[getChainId(toChain)];
+        if(fee != 0){
+            require(msg.value > fee);
+            _transferToken(address(0), feeGovernance, fee);
+        }
+
+        _depositToken(address(0), toChain, toAddr, (msg.value).sub(fee), "");
     }
 
     function deposit(string memory toChain, bytes memory toAddr, bytes memory data) payable public {
         require(data.length != 0);
-        _depositToken(address(0), toChain, toAddr, msg.value, data);
+
+        uint256 fee = chainFeeWithData[getChainId(toChain)];
+        if(fee != 0){
+            require(msg.value > fee);
+            _transferToken(address(0), feeGovernance, fee);
+        }
+
+        _depositToken(address(0), toChain, toAddr, (msg.value).sub(fee), data);
     }
-    
-    function depositToken(address token, string memory toChain, bytes memory toAddr, uint amount) public {
+
+    function depositToken(address token, string memory toChain, bytes memory toAddr, uint amount) public payable {
         require(token != address(0));
+
+        uint256 fee = chainFee[getChainId(toChain)];
+        if(fee != 0){
+            require(msg.value >= fee);
+            _transferToken(address(0), feeGovernance, msg.value);
+        }
+
         _depositToken(token, toChain, toAddr, amount, "");
     }
 
-    function depositToken(address token, string memory toChain, bytes memory toAddr, uint amount, bytes memory data) public {
+    function depositToken(address token, string memory toChain, bytes memory toAddr, uint amount, bytes memory data) public payable {
         require(token != address(0));
         require(data.length != 0);
+
+        uint256 fee = chainFeeWithData[getChainId(toChain)];
+        if(fee != 0){
+            require(msg.value >= fee);
+            _transferToken(address(0), feeGovernance, msg.value);
+        }
+
         _depositToken(token, toChain, toAddr, amount, data);
     }
 
@@ -401,11 +456,11 @@ contract BscVaultImpl is VaultStorage {
         depositCount = depositCount + 1;
         emit Deposit(toChain, msg.sender, toAddr, token, decimal, amount, depositCount, data);
     }
-    
+
     function depositNFT(address token, string memory toChain, bytes memory toAddr, uint tokenId) public {
         _depositNFT(token, toChain, toAddr, tokenId, "");
     }
-    
+
     function depositNFT(address token, string memory toChain, bytes memory toAddr, uint tokenId, bytes memory data) public {
         require(data.length != 0);
         _depositNFT(token, toChain, toAddr, tokenId, data);
@@ -510,7 +565,7 @@ contract BscVaultImpl is VaultStorage {
             bool result = LibCallBridgeReceiver.callReceiver(false, gasLimitForBridgeReceiver, tokenAddress, uints[1], data, _toAddr);
             emit BridgeReceiverResult(result, fromAddr, tokenAddress, data);
         }
-        
+
         emit WithdrawNFT(fromChain, fromAddr, toAddr, token, bytes32s, uints, data);
     }
 

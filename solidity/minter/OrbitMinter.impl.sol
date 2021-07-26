@@ -28,8 +28,11 @@ contract OrbitMinterImpl is OrbitMinter, SafeMath {
     uint public gasLimitForBridgeReceiver;
 
     mapping (address => uint) public minRequestAmount;
-    address public tokenOperator;
-    
+
+    address public policyAdmin;
+    mapping(bytes32 => uint256) public chainFee;
+    mapping(bytes32 => uint256) public chainFeeWithData;
+
     event Swap(string fromChain, bytes fromAddr, bytes toAddr, address tokenAddress, bytes32[] bytes32s, uint[] uints, bytes data);
     event SwapNFT(string fromChain, bytes fromAddr, bytes toAddr, address tokenAddress, bytes32[] bytes32s, uint[] uints, bytes data);
 
@@ -37,7 +40,7 @@ contract OrbitMinterImpl is OrbitMinter, SafeMath {
     event SwapRequestNFT(string toChain, address fromAddr, bytes toAddr, bytes token, address tokenAddress, uint tokenId, uint amount, uint depositId, bytes data);
 
     event BridgeReceiverResult(bool success, bytes fromAddr, address tokenAddress, bytes data);
-    
+
     event TaxPay(address fromAddr, address taxAddr, address tokenAddr, uint amount, uint tax);
 
     modifier onlyActivated {
@@ -50,11 +53,16 @@ contract OrbitMinterImpl is OrbitMinter, SafeMath {
         _;
     }
 
+    modifier onlyPolicyAdmin {
+        require(msg.sender == policyAdmin);
+        _;
+    }
+
     constructor() public OrbitMinter(address(0), address(0), 0) {
     }
 
     function getVersion() public pure returns(string memory){
-        return "OrbitMinter20210630";
+        return "OrbitMinter20210721";
     }
 
     function getTokenAddress(bytes memory token) public view returns(address){
@@ -66,10 +74,6 @@ contract OrbitMinterImpl is OrbitMinter, SafeMath {
         return sha256(abi.encodePacked(address(this), _chain));
     }
 
-    function changeActivate(bool activate) public onlyGovernance {
-        isActivated = activate;
-    }
-
     function setValidChain(string memory _chain, bool valid) public onlyGovernance {
         isValidChain[getChainId(_chain)] = valid;
     }
@@ -78,19 +82,8 @@ contract OrbitMinterImpl is OrbitMinter, SafeMath {
         govId = _govId;
     }
 
-    function setBridgingParams(uint _bridgingFee, uint _bridgingFeeWithData, uint _gasLimitForBridgeReceiver) public onlyGovernance {
-        bridgingFee = _bridgingFee;
-        bridgingFeeWithData = _bridgingFeeWithData;
-        gasLimitForBridgeReceiver = _gasLimitForBridgeReceiver;
-    }
-
     function setFeeTokenAddress(address _feeTokenAddress) public onlyGovernance {
         feeTokenAddress = _feeTokenAddress;
-    }
-
-    function setFeeGovernance(address payable _feeGovernance) public onlyGovernance {
-        require(_feeGovernance != address(0));
-        feeGovernance = _feeGovernance;
     }
 
     function setTaxRate(uint _taxRate) public onlyGovernance {
@@ -108,20 +101,41 @@ contract OrbitMinterImpl is OrbitMinter, SafeMath {
         tokenDeployer = _deployer;
     }
 
-    function setMinRequestSwapAmount(address _token, uint amount) public onlyGovernance {
+    function setHubContract(address _hubContract) public onlyGovernance {
+        require(_hubContract != address(0));
+        hubContract = _hubContract;
+    }
+
+    function setPolicyAdmin(address _policyAdmin) public onlyGovernance {
+        require(_policyAdmin != address(0));
+        policyAdmin = _policyAdmin;
+    }
+
+    function changeActivate(bool activate) public onlyPolicyAdmin {
+        isActivated = activate;
+    }
+
+    function setMinRequestSwapAmount(address _token, uint amount) public onlyPolicyAdmin {
         require(_token != address(0));
         require(tokenSummaries[_token] != 0);
         minRequestAmount[_token] = amount;
     }
 
-    function setTokenOperator(address _tokenOperator) public onlyGovernance {
-        require(_tokenOperator != address(0));
-        tokenOperator = _tokenOperator;
+    function setChainFee(string memory chainSymbol, uint256 _fee, uint256 _feeWithData) public onlyPolicyAdmin {
+        bytes32 chainId = getChainId(chainSymbol);
+        require(isValidChain[chainId]);
+
+        chainFee[chainId] = _fee;
+        chainFeeWithData[chainId] = _feeWithData;
     }
 
-    function setHubContract(address _hubContract) public onlyGovernance {
-        require(_hubContract != address(0));
-        hubContract = _hubContract;
+    function setFeeGovernance(address payable _feeGovernance) public onlyPolicyAdmin {
+        require(_feeGovernance != address(0));
+        feeGovernance = _feeGovernance;
+    }
+
+    function setGasLimitForBridgeReceiver(uint256 _gasLimitForBridgeReceiver) public onlyPolicyAdmin {
+        gasLimitForBridgeReceiver = _gasLimitForBridgeReceiver;
     }
 
     function addToken(bytes memory token, address tokenAddress) public onlyGovernance {
@@ -135,9 +149,7 @@ contract OrbitMinterImpl is OrbitMinter, SafeMath {
         tokenSummaries[tokenAddress] = tokenSummary;
     }
 
-    function addTokenWithDeploy(bool isFungible, bytes memory token, string memory name, string memory symbol, uint8 decimals) public {
-        require(msg.sender == tokenOperator);
-
+    function addTokenWithDeploy(bool isFungible, bytes memory token, string memory name, string memory symbol, uint8 decimals) public onlyPolicyAdmin {
         bytes32 tokenSummary = sha256(abi.encodePacked(chain, token));
         require(tokenAddr[tokenSummary] == address(0));
 
@@ -231,12 +243,12 @@ contract OrbitMinterImpl is OrbitMinter, SafeMath {
     }
 
     function requestSwap(address tokenAddress, string memory toChain, bytes memory toAddr, uint amount) public {
-        _requestSwap(tokenAddress, toChain, toAddr, amount, "", bridgingFee);
+        _requestSwap(tokenAddress, toChain, toAddr, amount, "", chainFee[getChainId(toChain)]);
     }
 
     function requestSwap(address tokenAddress, string memory toChain, bytes memory toAddr, uint amount, bytes memory data) public {
         require(data.length != 0);
-        _requestSwap(tokenAddress, toChain, toAddr, amount, data, bridgingFeeWithData);
+        _requestSwap(tokenAddress, toChain, toAddr, amount, data, chainFeeWithData[getChainId(toChain)]);
     }
 
     function _requestSwap(address tokenAddress, string memory toChain, bytes memory toAddr, uint amount, bytes memory data, uint feeAmount) private onlyActivated {
@@ -267,12 +279,12 @@ contract OrbitMinterImpl is OrbitMinter, SafeMath {
     }
 
     function requestSwapNFT(address nftAddress, uint tokenId, string memory toChain, bytes memory toAddr) public {
-        _requestSwapNFT(nftAddress, tokenId, toChain, toAddr, "", bridgingFee);
+        _requestSwapNFT(nftAddress, tokenId, toChain, toAddr, "", chainFee[getChainId(toChain)]);
     }
-    
+
     function requestSwapNFT(address nftAddress, uint tokenId, string memory toChain, bytes memory toAddr, bytes memory data) public {
         require(data.length != 0);
-        _requestSwapNFT(nftAddress, tokenId, toChain, toAddr, data, bridgingFeeWithData);
+        _requestSwapNFT(nftAddress, tokenId, toChain, toAddr, data, chainFeeWithData[getChainId(toChain)]);
     }
 
     function _requestSwapNFT(address nftAddress, uint tokenId, string memory toChain, bytes memory toAddr, bytes memory data, uint feeAmount) private onlyActivated {
@@ -329,11 +341,11 @@ contract OrbitMinterImpl is OrbitMinter, SafeMath {
         if (feeTokenAddress == address(0)) {
             return;
         }
-        
+
         if (feeGovernance == address(0)) {
             return;
         }
-        
+
         if(!IKIP7(feeTokenAddress).transferFrom(msg.sender, feeGovernance, feeAmount)) revert();
     }
 

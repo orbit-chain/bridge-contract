@@ -22,7 +22,7 @@ contract ERC20 is Context, IERC20 {
 
     address private _minter;
 
-    bool public isInitialized = false;
+    bool public isInitialized;
 
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
 
@@ -35,13 +35,15 @@ contract ERC20 is Context, IERC20 {
      * All three of these values are immutable: they can only be set once during
      * construction.
      */
-    constructor(address owner_, address minter_, string memory name_, string memory symbol_, uint8 decimals_) public {
+    constructor(address owner_, address minter_, string memory name_, string memory symbol_, uint8 decimals_, bool init) public {
         _owner = owner_;
         _minter = minter_;
 
         _name = name_;
         _symbol = symbol_;
         _decimals = decimals_;
+
+        isInitialized = init;
     }
 
     modifier onlyOwner {

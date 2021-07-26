@@ -28,5 +28,7 @@ contract MinterStorage {
 
     mapping (address => uint) public minRequestAmount;
 
-    address public tokenOperator;
+    address public policyAdmin;
+    mapping(bytes32 => uint256) public chainFee;
+    mapping(bytes32 => uint256) public chainFeeWithData;
 }

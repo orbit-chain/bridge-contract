@@ -18,4 +18,9 @@ contract VaultStorage {
     address public taxReceiver = 0xE9f3604B85c9672728eEecf689cf1F0cF7Dd03F2;
 
     uint public gasLimitForBridgeReceiver;
+    mapping(address => bool) public silentTokenList;
+
+    address public policyAdmin;
+    mapping(bytes32 => uint256) public chainFee;
+    mapping(bytes32 => uint256) public chainFeeWithData;
 }

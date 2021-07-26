@@ -1,39 +1,113 @@
-pragma solidity ^0.5.0;
+pragma solidity 0.5.0;
 
-import "../utils/SafeMath.sol";
-import "./EthVault.sol";
+library SafeMath {
+    function add(uint256 a, uint256 b) internal pure returns (uint256) {
+        uint256 c = a + b;
+        require(c >= a, "SafeMath: addition overflow");
 
-interface IERC20 {
-    function transfer(address to, uint256 value) external returns (bool);
+        return c;
+    }
 
-    function approve(address spender, uint256 value) external returns (bool);
+    function sub(uint256 a, uint256 b) internal pure returns (uint256) {
+        return sub(a, b, "SafeMath: subtraction overflow");
+    }
 
-    function transferFrom(address from, address to, uint256 value) external returns (bool);
+    function sub(uint256 a, uint256 b, string memory errorMessage) internal pure returns (uint256) {
+        require(b <= a, errorMessage);
+        uint256 c = a - b;
 
-    function totalSupply() external view returns (uint256);
+        return c;
+    }
 
-    function balanceOf(address who) external view returns (uint256);
+    function mul(uint256 a, uint256 b) internal pure returns (uint256) {
+        if (a == 0) {
+            return 0;
+        }
 
-    function allowance(address owner, address spender) external view returns (uint256);
+        uint256 c = a * b;
+        require(c / a == b, "SafeMath: multiplication overflow");
 
-    function decimals() external view returns (uint8);
+        return c;
+    }
 
-    event Transfer(address indexed from, address indexed to, uint256 value);
+    function div(uint256 a, uint256 b) internal pure returns (uint256) {
+        return div(a, b, "SafeMath: division by zero");
+    }
 
-    event Approval(address indexed owner, address indexed spender, uint256 value);
+    function div(uint256 a, uint256 b, string memory errorMessage) internal pure returns (uint256) {
+        require(b > 0, errorMessage);
+        uint256 c = a / b;
+
+        return c;
+    }
+
+    function mod(uint256 a, uint256 b) internal pure returns (uint256) {
+        return mod(a, b, "SafeMath: modulo by zero");
+    }
+
+    function mod(uint256 a, uint256 b, string memory errorMessage) internal pure returns (uint256) {
+        require(b != 0, errorMessage);
+        return a % b;
+    }
 }
 
-contract TIERC20 {
-    function transfer(address to, uint value) public;
-    function transferFrom(address from, address to, uint value) public;
+library Address {
+    function isContract(address account) internal view returns (bool) {
+        uint256 size;
+        assembly { size := extcodesize(account) }
+        return size > 0;
+    }
+}
 
-    function balanceOf(address who) public view returns (uint);
-    function allowance(address owner, address spender) public view returns (uint256);
-
+interface IERC20 {
+    function totalSupply() external view returns (uint256);
+    function balanceOf(address account) external view returns (uint256);
+    function transfer(address recipient, uint256 amount) external returns (bool);
+    function allowance(address owner, address spender) external view returns (uint256);
+    function approve(address spender, uint256 amount) external returns (bool);
+    function transferFrom(address sender, address recipient, uint256 amount) external returns (bool);
     function decimals() external view returns (uint8);
+}
 
-    event Transfer(address indexed from, address indexed to, uint256 value);
-    event Approval(address indexed owner, address indexed spender, uint256 value);
+library SafeERC20 {
+    using SafeMath for uint256;
+    using Address for address;
+
+    function safeTransfer(IERC20 token, address to, uint256 value) internal {
+        callOptionalReturn(token, abi.encodeWithSelector(token.transfer.selector, to, value));
+    }
+
+    function safeTransferFrom(IERC20 token, address from, address to, uint256 value) internal {
+        callOptionalReturn(token, abi.encodeWithSelector(token.transferFrom.selector, from, to, value));
+    }
+
+    function safeApprove(IERC20 token, address spender, uint256 value) internal {
+        require((value == 0) || (token.allowance(address(this), spender) == 0),
+            "SafeERC20: approve from non-zero to non-zero allowance"
+        );
+        callOptionalReturn(token, abi.encodeWithSelector(token.approve.selector, spender, value));
+    }
+
+    function safeIncreaseAllowance(IERC20 token, address spender, uint256 value) internal {
+        uint256 newAllowance = token.allowance(address(this), spender).add(value);
+        callOptionalReturn(token, abi.encodeWithSelector(token.approve.selector, spender, newAllowance));
+    }
+
+    function safeDecreaseAllowance(IERC20 token, address spender, uint256 value) internal {
+        uint256 newAllowance = token.allowance(address(this), spender).sub(value, "SafeERC20: decreased allowance below zero");
+        callOptionalReturn(token, abi.encodeWithSelector(token.approve.selector, spender, newAllowance));
+    }
+
+    function callOptionalReturn(IERC20 token, bytes memory data) private {
+        require(address(token).isContract(), "SafeERC20: call to non-contract");
+
+        (bool success, bytes memory returndata) = address(token).call(data);
+        require(success, "SafeERC20: low-level call failed");
+
+        if (returndata.length > 0) {
+            require(abi.decode(returndata, (bool)), "SafeERC20: ERC20 operation did not succeed");
+        }
+    }
 }
 
 interface IERC721 {
@@ -57,46 +131,6 @@ interface IFarm {
 interface OrbitBridgeReceiver {
     function onTokenBridgeReceived(address _token, uint256 _value, bytes calldata _data) external returns(uint);
 	function onNFTBridgeReceived(address _token, uint256 _tokenId, bytes calldata _data) external returns(uint);
-}
-
-library LibTokenManager {
-    function depositToken(address payable implAddr, address token, string memory toChain, uint amount) public returns(uint8 decimal) {
-        EthVaultImpl impl = EthVaultImpl(implAddr);
-        require(impl.isValidChain(impl.getChainId(toChain)));
-        require(amount != 0);
-
-        if(token == address(0)){
-            decimal = 18;
-        }
-        else if(token == impl.tetherAddress() || impl.silentTokenList(token)){
-            TIERC20(token).transferFrom(msg.sender, implAddr, amount);
-            decimal = TIERC20(token).decimals();
-        }
-        else{
-            if(!IERC20(token).transferFrom(msg.sender, implAddr, amount)) revert();
-            decimal = IERC20(token).decimals();
-        }
-        require(decimal > 0);
-
-        address payable farm = impl.farms(token);
-        if(farm != address(0)){
-            _transferToken(impl, token, farm, amount);
-            IFarm(farm).deposit(amount);
-        }
-    }
-    
-    function _transferToken(EthVaultImpl impl, address token, address payable destination, uint amount) public {
-        if(token == address(0)){
-            (bool transfered,) = destination.call.value(amount)("");
-            require(transfered);
-        }
-        else if(token == impl.tetherAddress() || impl.silentTokenList(token)){
-            TIERC20(token).transfer(destination, amount);
-        }
-        else{
-            if(!IERC20(token).transfer(destination, amount)) revert();
-        }
-    }
 }
 
 library LibCallBridgeReceiver {
@@ -124,17 +158,57 @@ library LibCallBridgeReceiver {
     }
 }
 
-contract EthVaultImpl is EthVault, SafeMath{
+contract EthVaultStorage {
+    /////////////////////////////////////////////////////////////////////////
+    // MultiSigWallet.sol
+    uint constant public MAX_OWNER_COUNT = 50;
+    mapping (uint => Transaction) public transactions;
+    mapping (uint => mapping (address => bool)) public confirmations;
+    mapping (address => bool) public isOwner;
+    address[] public owners;
+    uint public required;
+    uint public transactionCount;
+    struct Transaction {
+        address destination;
+        uint value;
+        bytes data;
+        bool executed;
+    }
+    /////////////////////////////////////////////////////////////////////////
+
+    /////////////////////////////////////////////////////////////////////////
+    // EthVault.sol
+    string public constant chain = "ETH";
+    bool public isActivated = true;
+    address payable public implementation;
+    address public tetherAddress;
+    uint public depositCount = 0;
+    mapping(bytes32 => bool) public isUsedWithdrawal;
+    mapping(bytes32 => address) public tokenAddr;
+    mapping(address => bytes32) public tokenSummaries;
+    mapping(bytes32 => bool) public isValidChain;
+    /////////////////////////////////////////////////////////////////////////
+
+    /////////////////////////////////////////////////////////////////////////
+    // EthVault.impl.sol
     uint public bridgingFee = 0;
     address payable public feeGovernance;
     mapping(address => bool) public silentTokenList;
-
     mapping(address => address payable) public farms;
     uint public taxRate; // 0.01% interval
     address public taxReceiver;
-
     uint public gasLimitForBridgeReceiver;
-    
+
+    address public policyAdmin;
+    mapping(bytes32 => uint256) public chainFee;
+    mapping(bytes32 => uint256) public chainFeeWithData;
+    /////////////////////////////////////////////////////////////////////////
+}
+
+contract EthVaultImpl is EthVaultStorage {
+    using SafeERC20 for IERC20;
+    using SafeMath for uint;
+
     event Deposit(string toChain, address fromAddr, bytes toAddr, address token, uint8 decimal, uint amount, uint depositId, bytes data);
     event DepositNFT(string toChain, address fromAddr, bytes toAddr, address token, uint tokenId, uint amount, uint depositId, bytes data);
 
@@ -142,25 +216,26 @@ contract EthVaultImpl is EthVault, SafeMath{
     event WithdrawNFT(string fromChain, bytes fromAddr, bytes toAddr, bytes token, bytes32[] bytes32s, uint[] uints, bytes data);
 
     event BridgeReceiverResult(bool success, bytes fromAddress, address tokenAddress, bytes data);
-    
+
     modifier onlyActivated {
         require(isActivated);
         _;
     }
 
-    constructor(address[] memory _owner) public EthVault(_owner, _owner.length, address(0), address(0)) {
+    modifier onlyWallet {
+        require(msg.sender == address(this));
+        _;
     }
+
+    modifier onlyPolicyAdmin {
+        require(msg.sender == policyAdmin);
+        _;
+    }
+
+    constructor() public payable { }
 
     function getVersion() public pure returns(string memory){
-        return "EthVault20210705";
-    }
-
-    function changeActivate(bool activate) public onlyWallet {
-        isActivated = activate;
-    }
-
-    function setTetherAddress(address tether) public onlyWallet {
-        tetherAddress = tether;
+        return "EthVault20210721A";
     }
 
     function getChainId(string memory _chain) public view returns(bytes32){
@@ -171,15 +246,38 @@ contract EthVaultImpl is EthVault, SafeMath{
         isValidChain[getChainId(_chain)] = valid;
     }
 
-    function setSilentToken(address token, bool valid) public onlyWallet {
-        silentTokenList[token] = valid;
-    }
-    
-    function setParams(uint _taxRate, address _taxReceiver, uint _gasLimitForBridgeReceiver) public onlyWallet {
+    function setTaxParams(uint _taxRate, address _taxReceiver) public onlyWallet {
         require(_taxRate < 10000);
         require(_taxReceiver != address(0));
         taxRate = _taxRate;
         taxReceiver = _taxReceiver;
+    }
+
+    function setPolicyAdmin(address _policyAdmin) public onlyWallet {
+        require(_policyAdmin != address(0));
+
+        policyAdmin = _policyAdmin;
+    }
+
+    function changeActivate(bool activate) public onlyPolicyAdmin {
+        isActivated = activate;
+    }
+
+    function setFeeGovernance(address payable _feeGovernance) public onlyPolicyAdmin {
+        require(_feeGovernance != address(0));
+
+        feeGovernance = _feeGovernance;
+    }
+
+    function setChainFee(string memory chainSymbol, uint256 _fee, uint256 _feeWithData) public onlyPolicyAdmin {
+        bytes32 chainId = getChainId(chainSymbol);
+        require(isValidChain[chainId]);
+
+        chainFee[chainId] = _fee;
+        chainFeeWithData[chainId] = _feeWithData;
+    }
+
+    function setGasLimitForBridgeReceiver(uint256 _gasLimitForBridgeReceiver) public onlyPolicyAdmin {
         gasLimitForBridgeReceiver = _gasLimitForBridgeReceiver;
     }
 
@@ -194,7 +292,7 @@ contract EthVaultImpl is EthVault, SafeMath{
             amount = IERC20(token).balanceOf(address(this));
         }
 
-        LibTokenManager._transferToken(this, token, proxy, amount);
+        _transferToken(token, proxy, amount);
         IFarm(proxy).deposit(amount);
 
         farms[token] = proxy;
@@ -214,49 +312,93 @@ contract EthVaultImpl is EthVault, SafeMath{
                 amount = IERC20(token).balanceOf(address(this));
             }
 
-            LibTokenManager._transferToken(this, token, newProxy, amount);
+            _transferToken(token, newProxy, amount);
             IFarm(newProxy).deposit(amount);
         }
 
         farms[token] = newProxy;
     }
-    
+
     function deposit(string memory toChain, bytes memory toAddr) payable public {
-        _depositToken(address(0), toChain, toAddr, msg.value, "");
+        uint256 fee = chainFee[getChainId(toChain)];
+        if(fee != 0){
+            require(msg.value > fee);
+            _transferToken(address(0), feeGovernance, fee);
+        }
+
+        _depositToken(address(0), toChain, toAddr, (msg.value).sub(fee), "");
     }
 
     function deposit(string memory toChain, bytes memory toAddr, bytes memory data) payable public {
         require(data.length != 0);
-        _depositToken(address(0), toChain, toAddr, msg.value, data);
+
+        uint256 fee = chainFeeWithData[getChainId(toChain)];
+        if(fee != 0){
+            require(msg.value > fee);
+            _transferToken(address(0), feeGovernance, fee);
+        }
+
+        _depositToken(address(0), toChain, toAddr, (msg.value).sub(fee), data);
     }
-    
-    function depositToken(address token, string memory toChain, bytes memory toAddr, uint amount) public {
+
+    function depositToken(address token, string memory toChain, bytes memory toAddr, uint amount) public payable {
         require(token != address(0));
+
+        uint256 fee = chainFee[getChainId(toChain)];
+        if(fee != 0){
+            require(msg.value >= fee);
+            _transferToken(address(0), feeGovernance, msg.value);
+        }
+
         _depositToken(token, toChain, toAddr, amount, "");
     }
 
-    function depositToken(address token, string memory toChain, bytes memory toAddr, uint amount, bytes memory data) public {
+    function depositToken(address token, string memory toChain, bytes memory toAddr, uint amount, bytes memory data) public payable {
         require(token != address(0));
         require(data.length != 0);
+
+        uint256 fee = chainFeeWithData[getChainId(toChain)];
+        if(fee != 0){
+            require(msg.value >= fee);
+            _transferToken(address(0), feeGovernance, msg.value);
+        }
+
         _depositToken(token, toChain, toAddr, amount, data);
     }
 
     function _depositToken(address token, string memory toChain, bytes memory toAddr, uint amount, bytes memory data) private onlyActivated {
-        uint8 decimal = LibTokenManager.depositToken(address(this), token, toChain, amount);
+        require(isValidChain[getChainId(toChain)]);
+        require(amount != 0);
+
+        uint8 decimal;
+        if(token == address(0)){
+            decimal = 18;
+        }
+        else{
+            IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
+            decimal = IERC20(token).decimals();
+        }
+        require(decimal > 0);
+
+        address payable farm = farms[token];
+        if(farm != address(0)){
+            _transferToken(token, farm, amount);
+            IFarm(farm).deposit(amount);
+        }
 
         if(taxRate > 0 && taxReceiver != address(0)){
             uint tax = _payTax(token, amount, decimal);
-            amount = safeSub(amount, tax);
+            amount = amount.sub(tax);
         }
 
         depositCount = depositCount + 1;
         emit Deposit(toChain, msg.sender, toAddr, token, decimal, amount, depositCount, data);
     }
-    
+
     function depositNFT(address token, string memory toChain, bytes memory toAddr, uint tokenId) public {
         _depositNFT(token, toChain, toAddr, tokenId, "");
     }
-    
+
     function depositNFT(address token, string memory toChain, bytes memory toAddr, uint tokenId, bytes memory data) public {
         require(data.length != 0);
         _depositNFT(token, toChain, toAddr, tokenId, data);
@@ -306,11 +448,11 @@ contract EthVaultImpl is EthVault, SafeMath{
         address payable _toAddr = bytesToAddress(toAddr);
         address tokenAddress = bytesToAddress(token);
 
-        if(farms[tokenAddress] != address(0)){ // farmProxy 출금
+        if(farms[tokenAddress] != address(0)){
             IFarm(farms[tokenAddress]).withdraw(_toAddr, uints[0]);
         }
-        else{ // 일반 출금
-            LibTokenManager._transferToken(this, tokenAddress, _toAddr, uints[0]);
+        else{
+            _transferToken(tokenAddress, _toAddr, uints[0]);
         }
 
         if(isContract(_toAddr) && data.length != 0){
@@ -361,7 +503,7 @@ contract EthVaultImpl is EthVault, SafeMath{
             bool result = LibCallBridgeReceiver.callReceiver(false, gasLimitForBridgeReceiver, tokenAddress, uints[1], data, _toAddr);
             emit BridgeReceiverResult(result, fromAddr, tokenAddress, data);
         }
-        
+
         emit WithdrawNFT(fromChain, fromAddr, toAddr, token, bytes32s, uints, data);
     }
 
@@ -388,10 +530,20 @@ contract EthVaultImpl is EthVault, SafeMath{
     }
 
     function _payTax(address token, uint amount, uint8 decimal) private returns (uint tax) {
-        tax = safeDiv(safeMul(amount, taxRate), 10000);
+        tax = amount.mul(taxRate).div(10000);
         if(tax > 0){
             depositCount = depositCount + 1;
             emit Deposit("ORBIT", msg.sender, abi.encodePacked(taxReceiver), token, decimal, tax, depositCount, "");
+        }
+    }
+
+    function _transferToken(address token, address payable destination, uint amount) private {
+        if(token == address(0)){
+            (bool transfered,) = destination.call.value(amount)("");
+            require(transfered);
+        }
+        else{
+            IERC20(token).safeTransfer(destination, amount);
         }
     }
 
