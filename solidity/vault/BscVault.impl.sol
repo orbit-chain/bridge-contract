@@ -293,7 +293,7 @@ contract BscVaultImpl is VaultStorage {
     }
 
     function getVersion() public pure returns(string memory){
-        return "BscVault20210726";
+        return "BscVault20210727";
     }
 
     function setChainSymbol(string memory _chain) public onlyGovernance {
@@ -457,12 +457,25 @@ contract BscVaultImpl is VaultStorage {
         emit Deposit(toChain, msg.sender, toAddr, token, decimal, amount, depositCount, data);
     }
 
-    function depositNFT(address token, string memory toChain, bytes memory toAddr, uint tokenId) public {
+    function depositNFT(address token, string memory toChain, bytes memory toAddr, uint tokenId) public payable {
+        uint256 fee = chainFee[getChainId(toChain)];
+        if(fee != 0){
+            require(msg.value >= fee);
+            _transferToken(address(0), feeGovernance, msg.value);
+        }
+
         _depositNFT(token, toChain, toAddr, tokenId, "");
     }
 
-    function depositNFT(address token, string memory toChain, bytes memory toAddr, uint tokenId, bytes memory data) public {
+    function depositNFT(address token, string memory toChain, bytes memory toAddr, uint tokenId, bytes memory data) public payable {
         require(data.length != 0);
+
+        uint256 fee = chainFeeWithData[getChainId(toChain)];
+        if(fee != 0){
+            require(msg.value >= fee);
+            _transferToken(address(0), feeGovernance, msg.value);
+        }
+
         _depositNFT(token, toChain, toAddr, tokenId, data);
     }
 
