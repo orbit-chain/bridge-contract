@@ -33,6 +33,12 @@ contract OrbitMinterImpl is OrbitMinter, SafeMath {
     mapping(bytes32 => uint256) public chainFee;
     mapping(bytes32 => uint256) public chainFeeWithData;
 
+    mapping(bytes32 => uint256) public chainUintsLength;
+    mapping(bytes32 => uint256) public chainAddressLength;
+    uint256 public chainTokenLength;
+
+    mapping(address => bool) public silentTokenList;
+
     event Swap(string fromChain, bytes fromAddr, bytes toAddr, address tokenAddress, bytes32[] bytes32s, uint[] uints, bytes data);
     event SwapNFT(string fromChain, bytes fromAddr, bytes toAddr, address tokenAddress, bytes32[] bytes32s, uint[] uints, bytes data);
 
@@ -62,7 +68,7 @@ contract OrbitMinterImpl is OrbitMinter, SafeMath {
     }
 
     function getVersion() public pure returns(string memory){
-        return "OrbitMinter20210726";
+        return "OrbitMinter20210817A";
     }
 
     function getTokenAddress(bytes memory token) public view returns(address){
@@ -74,8 +80,18 @@ contract OrbitMinterImpl is OrbitMinter, SafeMath {
         return sha256(abi.encodePacked(address(this), _chain));
     }
 
-    function setValidChain(string memory _chain, bool valid) public onlyGovernance {
-        isValidChain[getChainId(_chain)] = valid;
+    function setValidChain(string memory _chain, bool valid, uint fromAddrLen, uint uintsLen) public onlyGovernance {
+        bytes32 chainId = getChainId(_chain);
+        require(chainId != getChainId(chain));
+        isValidChain[chainId] = valid;
+        if(valid){
+            chainAddressLength[chainId] = fromAddrLen;
+            chainUintsLength[chainId] = uintsLen;
+        }
+        else{
+            chainAddressLength[chainId] = 0;
+            chainUintsLength[chainId] = 0;
+        }
     }
 
     function setGovId(bytes32 _govId) public onlyGovernance {
@@ -138,6 +154,17 @@ contract OrbitMinterImpl is OrbitMinter, SafeMath {
         gasLimitForBridgeReceiver = _gasLimitForBridgeReceiver;
     }
 
+    function setSilentToken(address token, bool v) public onlyPolicyAdmin {
+        require(token != address(0));
+
+        silentTokenList[token] = v;
+    }
+
+    function setTokenLength(uint256 tokenLen) public onlyGovernance {
+        require(tokenLen != 0);
+        chainTokenLength = tokenLen;
+    }
+
     function addToken(bytes memory token, address tokenAddress) public onlyGovernance {
         require(tokenSummaries[tokenAddress] == 0);
 
@@ -168,10 +195,13 @@ contract OrbitMinterImpl is OrbitMinter, SafeMath {
     // Fix Data Info
     ///@param bytes32s [0]:govId, [1]:txHash
     ///@param uints [0]:amount, [1]:decimals
-    function swap(string memory fromChain, bytes memory fromAddr, bytes memory toAddr, bytes memory token, bytes32[] memory bytes32s, uint[] memory uints, bytes memory data) public onlyBridgeContract {
+    function swap(string memory fromChain, bytes memory fromAddr, address toAddr, bytes memory token, bytes32[] memory bytes32s, uint[] memory uints, bytes memory data) public onlyBridgeContract {
         require(bytes32s[0] == govId);
-        require(bytes32s.length >= 1);
-        require(uints.length >= 2);
+        require(bytes32s.length == 2);
+        require(uints.length == chainUintsLength[getChainId(fromChain)]);
+        require(uints[1] <= 100);
+        require(fromAddr.length == chainAddressLength[getChainId(fromChain)]);
+        require(token.length == chainTokenLength);
 
         bytes32 hash = sha256(abi.encodePacked(hubContract, fromChain, chain, fromAddr, toAddr, token, bytes32s, uints, data));
         require(!isConfirmed[hash]);
@@ -184,32 +214,32 @@ contract OrbitMinterImpl is OrbitMinter, SafeMath {
         if(tokenAddress == address(0)){
             revert();
         }else{
-            if(!IKIP7(tokenAddress).transfer(bytesToAddress(toAddr), uints[0])) revert();
+            if(!IKIP7(tokenAddress).transfer(toAddr, uints[0])) revert();
         }
 
-        if(isContract(bytesToAddress(toAddr)) && data.length != 0){
+        if(isContract(toAddr) && data.length != 0){
             bool result;
             bytes memory callbytes = abi.encodeWithSignature("onTokenBridgeReceived(address,uint256,bytes)", tokenAddress, uints[0], data);
             if (gasLimitForBridgeReceiver > 0) {
-                (result, ) = bytesToAddress(toAddr).call.gas(gasLimitForBridgeReceiver)(callbytes);
+                (result, ) = toAddr.call.gas(gasLimitForBridgeReceiver)(callbytes);
             } else {
-                (result, ) = bytesToAddress(toAddr).call(callbytes);
+                (result, ) = toAddr.call(callbytes);
             }
             emit BridgeReceiverResult(result, fromAddr, tokenAddress, data);
         }
 
-        if(!isValidChain[getChainId(fromChain)]) _setValidChain(fromChain, true);
-
-        emit Swap(fromChain, fromAddr, toAddr, tokenAddress, bytes32s, uints, data);
+        emit Swap(fromChain, fromAddr, abi.encodePacked(toAddr), tokenAddress, bytes32s, uints, data);
     }
 
     // Fix Data Info
     ///@param bytes32s [0]:govId, [1]:txHash
     ///@param uints [0]:amount, [1]:tokenId
-    function swapNFT(string memory fromChain, bytes memory fromAddr, bytes memory toAddr, bytes memory token, bytes32[] memory bytes32s, uint[] memory uints, bytes memory data) public onlyBridgeContract {
-        require(bytes32s.length >= 1);
+    function swapNFT(string memory fromChain, bytes memory fromAddr, address toAddr, bytes memory token, bytes32[] memory bytes32s, uint[] memory uints, bytes memory data) public onlyBridgeContract {
+        require(bytes32s.length == 2);
         require(bytes32s[0] == govId);
-        require(uints.length >= 2);
+        require(uints.length == chainUintsLength[getChainId(fromChain)]);
+        require(fromAddr.length == chainAddressLength[getChainId(fromChain)]);
+        require(token.length == chainTokenLength);
 
         bytes32 hash = sha256(abi.encodePacked("NFT", hubContract, fromChain, chain, fromAddr, toAddr, token, bytes32s, uints, data));
         require(!isConfirmed[hash]);
@@ -222,24 +252,22 @@ contract OrbitMinterImpl is OrbitMinter, SafeMath {
         if(nftAddress == address(0)){
             revert();
         }else{
-            IKIP17(nftAddress)._mint(bytesToAddress(toAddr), uints[1]);
-            require(IKIP17(nftAddress).ownerOf(uints[1]) == bytesToAddress(toAddr));
+            IKIP17(nftAddress)._mint(toAddr, uints[1]);
+            require(IKIP17(nftAddress).ownerOf(uints[1]) == toAddr);
         }
 
-        if(isContract(bytesToAddress(toAddr)) && data.length != 0){
+        if(isContract(toAddr) && data.length != 0){
             bool result;
             bytes memory callbytes = abi.encodeWithSignature("onNFTBridgeReceived(address,uint256,bytes)", nftAddress, uints[1], data);
             if (gasLimitForBridgeReceiver > 0) {
-                (result, ) = bytesToAddress(toAddr).call.gas(gasLimitForBridgeReceiver)(callbytes);
+                (result, ) = toAddr.call.gas(gasLimitForBridgeReceiver)(callbytes);
             } else {
-                (result, ) = bytesToAddress(toAddr).call(callbytes);
+                (result, ) = toAddr.call(callbytes);
             }
             emit BridgeReceiverResult(result, fromAddr, nftAddress, data);
         }
 
-        if(!isValidChain[getChainId(fromChain)]) _setValidChain(fromChain, true);
-
-        emit SwapNFT(fromChain, fromAddr, toAddr, nftAddress, bytes32s, uints, data);
+        emit SwapNFT(fromChain, fromAddr, abi.encodePacked(toAddr), nftAddress, bytes32s, uints, data);
     }
 
     function requestSwap(address tokenAddress, string memory toChain, bytes memory toAddr, uint amount) public {
@@ -254,6 +282,7 @@ contract OrbitMinterImpl is OrbitMinter, SafeMath {
     function _requestSwap(address tokenAddress, string memory toChain, bytes memory toAddr, uint amount, bytes memory data, uint feeAmount) private onlyActivated {
         require(isValidChain[getChainId(toChain)]);
         require(tokenAddress != address(0));
+        require(!silentTokenList[tokenAddress]);
 
         _transferBridgingFee(feeAmount);
 
@@ -290,6 +319,7 @@ contract OrbitMinterImpl is OrbitMinter, SafeMath {
     function _requestSwapNFT(address nftAddress, uint tokenId, string memory toChain, bytes memory toAddr, bytes memory data, uint feeAmount) private onlyActivated {
         require(isValidChain[getChainId(toChain)]);
         require(nftAddress != address(0));
+        require(!silentTokenList[nftAddress]);
 
         _transferBridgingFee(feeAmount);
 
@@ -369,10 +399,6 @@ contract OrbitMinterImpl is OrbitMinter, SafeMath {
         assembly {
             addr := mload(add(bys,20))
         }
-    }
-
-    function _setValidChain(string memory _chain, bool valid) private {
-        isValidChain[getChainId(_chain)] = valid;
     }
 
     function () payable external {

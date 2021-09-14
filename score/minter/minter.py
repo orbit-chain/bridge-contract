@@ -76,6 +76,13 @@ class IconMinterContract(IconScoreBase):
         self._tax_rate = VarDB("tax_rate", db, value_type=int)
         self._tax_receiver = VarDB("tax_receiver", db, value_type=bytes)
 
+        self._policy_admin = VarDB("policy_admin", db, value_type=Address)
+        self._chain_fee = DictDB("chain_fee", db, value_type=int)
+        self._chain_fee_with_data = DictDB("chain_fee_with_data", db, value_type=int)
+        self._chain_uints_length = DictDB("chain_uints_length", db, value_type=int)
+        self._chain_address_length = DictDB("chain_address_length", db, value_type=int)
+        self._chain_token_length = VarDB("chain_token_length", db, value_type=int)
+
     def on_install(self, _governance: Address, _fee_governance: Address, _bridging_fee: int, _gov_id: bytes) -> None:
         super().on_install()
 
@@ -88,6 +95,24 @@ class IconMinterContract(IconScoreBase):
 
     def on_update(self) -> None:
         super().on_update()
+
+        self._policy_admin.set(Address.from_string("hx" + "0" * 40))
+        self._chain_fee[self.getChainId("ETH")] = 1000000000000000
+        self._chain_fee_with_data[self.getChainId("ETH")] = 4000000000000000
+        self._chain_uints_length[self.getChainId("ETH")] = 96
+        self._chain_address_length[self.getChainId("ETH")] = 20
+
+        self._chain_fee[self.getChainId("KLAYTN")] = 1000000000000000
+        self._chain_fee_with_data[self.getChainId("KLAYTN")] = 4000000000000000
+        self._chain_uints_length[self.getChainId("KLAYTN")] = 96
+        self._chain_address_length[self.getChainId("KLAYTN")] = 20
+
+        self._chain_fee[self.getChainId("ORBIT")] = 1000000000000000
+        self._chain_fee_with_data[self.getChainId("ORBIT")] = 4000000000000000
+        self._chain_uints_length[self.getChainId("ORBIT")] = 96
+        self._chain_address_length[self.getChainId("ORBIT")] = 20
+
+        self._chain_token_length.set(20)
 
     def require(self, execute_result: bool, msg: str):
         if not execute_result:
@@ -174,6 +199,30 @@ class IconMinterContract(IconScoreBase):
     def convertBytesToAddress(self, account_bytes: bytes) -> Address:
         return Address.from_bytes(account_bytes)
 
+    @external(readonly=True)
+    def policyAdmin(self) -> Address:
+        return self._policy_admin.get()
+
+    @external(readonly=True)
+    def chainFee(self, chain: str) -> int:
+        return self._chain_fee[self.getChainId(chain)]
+
+    @external(readonly=True)
+    def chainFeeWithData(self, chain: str) -> int:
+        return self._chain_fee_with_data[self.getChainId(chain)]
+
+    @external(readonly=True)
+    def chainUintsLength(self, chain: str) -> int:
+        return self._chain_uints_length[self.getChainId(chain)]
+
+    @external(readonly=True)
+    def chainAddressLength(self, chain: str) -> int:
+        return self._chain_address_length[self.getChainId(chain)]
+
+    @external(readonly=True)
+    def chainTokenLength(self) -> int:
+        return self._chain_token_length.get()
+
     @only_governance
     @external
     def transferOwnership(self, _governance: Address):
@@ -186,24 +235,34 @@ class IconMinterContract(IconScoreBase):
 
     @only_governance
     @external
-    def setBridgingFee(self, _bridging_fee: int):
-        self._bridging_fee.set(_bridging_fee)
-
-    @only_governance
-    @external
     def setGovId(self, _gov_id: bytes):
         self.require(len(_gov_id) == 32, "Invalid GovId")
         self._gov_id.set(_gov_id)
 
     @only_governance
     @external
-    def setActivated(self, _is_activated: bool):
-        self._is_activated.set(_is_activated)
+    def setValidChain(self, chainSymbol: str, valid: bool, fromAddrLen: int, uintsLen: int):
+        self.require(self._chain.get() != chainSymbol, "Error: invalid chain")
+        self._is_valid_chain[self.getChainId(chainSymbol)] = valid
+        if valid :
+            self._chain_uints_length[self.getChainId(chainSymbol)] = uintsLen
+            self._chain_address_length[self.getChainId(chainSymbol)] = fromAddrLen
+        else:
+            self._chain_uints_length[self.getChainId(chainSymbol)] = 0
+            self._chain_address_length[self.getChainId(chainSymbol)] = 0
 
     @only_governance
     @external
-    def setValidChain(self, chain: str, valid: bool):
-        self._is_valid_chain[self.getChainId(chain)] = valid
+    def setChainLength(self, chainSymbol: str, fromAddrLen: int, uintsLen: int):
+        self.require(self._chain.get() != chainSymbol, "Error: invalid chain")
+        self.require(self._is_valid_chain[self.getChainId(chainSymbol)], "Error: invalid chain")
+        self._chain_uints_length[self.getChainId(chainSymbol)] = uintsLen
+        self._chain_address_length[self.getChainId(chainSymbol)] = fromAddrLen
+
+    @only_governance
+    @external
+    def setTokenLength(self, tokenLen: int):
+        self._chain_token_length.set(tokenLen)
 
     @only_governance
     @external
@@ -219,6 +278,11 @@ class IconMinterContract(IconScoreBase):
 
     @only_governance
     @external
+    def setPolicyAdmin(self, _policy_admin: Address):
+        self._policy_admin.set(_policy_admin)
+
+    @only_governance
+    @external
     def addToken(self, token: bytes, tokenAddress: Address):
         token_summary = self.getTokenSummary(token)
         self.require(self._token_addrs[token_summary] == None, "Already Set")
@@ -230,15 +294,30 @@ class IconMinterContract(IconScoreBase):
         self._token_addrs[token_summary] = tokenAddress
         self._token_summaries[tokenAddress] = token_summary
 
+    @external
+    def setActivated(self, _is_activated: bool):
+        self.require(self.msg.sender == self._policy_admin.get(), "Error: Invalid Sender")
+        self._is_activated.set(_is_activated)
+
+    @external
+    def setChainFee(self, chainSymbol: str, fee: int, feeWithData: int):
+        self.require(self.msg.sender == self._policy_admin.get(), "Error: Invalid Sender")
+        self.require(self._is_valid_chain[self.getChainId(chainSymbol)], "Error: Invalid Chain")
+        self._chain_fee[self.getChainId(chainSymbol)] = fee
+        self._chain_fee_with_data[self.getChainId(chainSymbol)] = feeWithData
+
     @payable
     @external
-    def requestSwap(self, tokenAddress: Address, toChain: str, toAddr: bytes, amount: int):
+    def requestSwap(self, tokenAddress: Address, toChain: str, toAddr: bytes, amount: int, data: bytes = None):
         self.require(self._is_activated.get(), "Error: isActivated False")
         self.require(self._is_valid_chain[self.getChainId(toChain)], "Error: Invalid toChain")
         self.require(self._is_valid_token[tokenAddress], "Error: Invalid token address")
-        self.require(self.msg.value >= self._bridging_fee.get(), "Error: Not enough bridging fee")
         self.require(amount > 0, "Error: Not enough amount")
 
+        if data == None:
+            self.require(self.msg.value >= self._chain_fee[self.getChainId(toChain)], "Error: Not enough bridging fee")
+        else:
+            self.require(self.msg.value >= self._chain_fee_with_data[self.getChainId(toChain)], "Error: Not enough bridging fee")
         self.require(self._transferBridgingFee(self.msg.value), "Error: Transfer Bridging Fee Fail")
 
         tokenSummary = self._token_summaries[tokenAddress]
@@ -262,17 +341,20 @@ class IconMinterContract(IconScoreBase):
         depositId = self._deposit_count.get() + 1
         self._deposit_count.set(depositId)
 
-        self.SwapRequest(self._chain.get(), toChain, self.convertAddressToBytes(self.msg.sender), toAddr, token, self.convertAddressToBytes(tokenAddress), decimal, amount, depositId, None)
+        self.SwapRequest(self._chain.get(), toChain, self.convertAddressToBytes(self.msg.sender), toAddr, token, self.convertAddressToBytes(tokenAddress), decimal, amount, depositId, data)
 
     @payable
     @external
-    def requestSwapNFT(self, nftAddress: Address, toChain: str, toAddr: bytes, tokenId: int):
+    def requestSwapNFT(self, nftAddress: Address, toChain: str, toAddr: bytes, tokenId: int, data: bytes = None):
         self.require(self._is_activated.get(), "Error: isActivated False")
         self.require(self._is_valid_chain[self.getChainId(toChain)], "Error: Invalid toChain")
         self.require(self._is_valid_token[nftAddress], "Error: Invalid token address")
-        self.require(self.msg.value >= self._bridging_fee.get(), "Error: Not enough bridging fee")
-        self.require(tokenId >= 0, "Error: Not enough amount")
+        self.require(tokenId >= 0, "Error: Invalid Token ID")
 
+        if data == None:
+            self.require(self.msg.value >= self._chain_fee[self.getChainId(toChain)], "Error: Not enough bridging fee")
+        else:
+            self.require(self.msg.value >= self._chain_fee_with_data[self.getChainId(toChain)], "Error: Not enough bridging fee")
         self.require(self._transferBridgingFee(self.msg.value), "Error: Transfer Bridging Fee Fail")
 
         tokenSummary = self._token_summaries[nftAddress]
@@ -286,16 +368,18 @@ class IconMinterContract(IconScoreBase):
         depositId = self._deposit_count.get() + 1
         self._deposit_count.set(depositId)
 
-        self.SwapNFTRequest(self._chain.get(), toChain, self.convertAddressToBytes(self.msg.sender), toAddr, token, self.convertAddressToBytes(nftAddress), tokenId, 1, depositId, None)
+        self.SwapNFTRequest(self._chain.get(), toChain, self.convertAddressToBytes(self.msg.sender), toAddr, token, self.convertAddressToBytes(nftAddress), tokenId, 1, depositId, data)
 
     @external
     def swap(self, hubContract: bytes, fromChain: str, fromAddr: bytes, toAddr: bytes, token: bytes, bytes32s: bytes, uints: bytes, sigs: str, data: bytes = None):
         self.require(self._is_activated.get(), "Error: isActivated False")
         self.require(len(hubContract) == 20, "Error: Invaild HubContract")
+        self.require(len(fromAddr) == self._chain_address_length[self.getChainId(fromChain)], "Error: Invalid fromAddr length")
         self.require(len(toAddr) == 21, "Error: Invalid toAddr length")
-        self.require(len(bytes32s) >= 32, "Error: Invalid bytes32s length")
+        self.require(len(token) == self._chain_token_length.get(), "Error: Invalid token length")
+        self.require(len(bytes32s) == 64, "Error: Invalid bytes32s length")
         self.require(len(bytes32s) % 32 == 0, "Error: Invalid bytes32s length")
-        self.require(len(uints) >= 64, "Error: Invalid uints length")
+        self.require(len(uints) == self._chain_uints_length[self.getChainId(fromChain)], "Error: Invalid uints length")
         self.require(len(uints) % 32 == 0, "Error: Invalid bytes32s length")
 
         govId = bytes32s[:32]
@@ -322,9 +406,6 @@ class IconMinterContract(IconScoreBase):
 
         self.require(self._mint(tokenAddress, self.convertBytesToAddress(toAddr), amount), "Error: Mint Token Fail")
 
-        if not self.isValidChain(fromChain):
-            self._setValidChain(fromChain)
-
         self.Swap(hubContract, fromChain, self._chain.get(), fromAddr, toAddr, self.convertAddressToBytes(tokenAddress), bytes32s, uints, data)
 
     def encodePackedSwapHash(self, hubContract: bytes, fromChain: str, toChain:str, fromAddr: bytes, toAddr: bytes, token: bytes, bytes32s: bytes, uints: bytes) -> bytes:
@@ -337,10 +418,12 @@ class IconMinterContract(IconScoreBase):
     def swapNFT(self, hubContract: bytes, fromChain: str, fromAddr: bytes, toAddr: bytes, token: bytes, bytes32s: bytes, uints: bytes, sigs: str, data: bytes = None):
         self.require(self._is_activated.get(), "Error: isActivated False")
         self.require(len(hubContract) == 20, "Error: Invaild HubContract")
+        self.require(len(fromAddr) == self._chain_address_length[self.getChainId(fromChain)], "Error: Invalid fromAddr length")
         self.require(len(toAddr) == 21, "Error: Invalid toAddr length")
-        self.require(len(bytes32s) >= 32, "Error: Invalid bytes32s length")
+        self.require(len(token) == self._chain_token_length.get(), "Error: Invalid token length")
+        self.require(len(bytes32s) == 64, "Error: Invalid bytes32s length")
         self.require(len(bytes32s) % 32 == 0, "Error: Invalid bytes32s length")
-        self.require(len(uints) >= 64, "Error: Invalid uints length")
+        self.require(len(uints) == self._chain_uints_length[self.getChainId(fromChain)], "Error: Invalid uints length")
         self.require(len(uints) % 32 == 0, "Error: Invalid bytes32s length")
 
         govId = bytes32s[:32]
@@ -364,9 +447,6 @@ class IconMinterContract(IconScoreBase):
 
         self.require(self._mintNFT(tokenAddress, self.convertBytesToAddress(toAddr), tokenId), "Error: Mint Token Fail")
 
-        if not self.isValidChain(fromChain):
-            self._setValidChain(fromChain)
-
         self.SwapNFT(hubContract, fromChain, self._chain.get(), fromAddr, toAddr, self.convertAddressToBytes(tokenAddress), bytes32s, uints, data)
 
     def encodePackedSwapNFTHash(self, hubContract: bytes, fromChain: str, toChain:str, fromAddr: bytes, toAddr: bytes, token: bytes, bytes32s: bytes, uints: bytes) -> bytes:
@@ -375,9 +455,6 @@ class IconMinterContract(IconScoreBase):
         nft_bytes = 'NFT'.encode()
 
         return nft_bytes + hubContract + fromChain_bytes + toChain_bytes + fromAddr + toAddr + token + bytes32s + uints
-
-    def _setValidChain(self, chain: str):
-        self._is_valid_chain[self.getChainId(chain)] = True
 
     def _validate_signature(self, sigHash: bytes, sigs: str) -> bool:
         mig_score = self.create_interface_score(self._governance.get(), MultiSigWalletInterface)

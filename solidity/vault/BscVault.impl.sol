@@ -293,7 +293,7 @@ contract BscVaultImpl is VaultStorage {
     }
 
     function getVersion() public pure returns(string memory){
-        return "BscVault20210727";
+        return "BscVault20210817A";
     }
 
     function setChainSymbol(string memory _chain) public onlyGovernance {
@@ -304,8 +304,18 @@ contract BscVaultImpl is VaultStorage {
         return sha256(abi.encodePacked(address(this), chainSymbol));
     }
 
-    function setValidChain(string memory chainSymbol, bool valid) public onlyGovernance {
-        isValidChain[getChainId(chainSymbol)] = valid;
+    function setValidChain(string memory chainSymbol, bool valid, uint fromAddrLen, uint uintsLen) public onlyGovernance {
+        bytes32 chainId = getChainId(chainSymbol);
+        require(chainId != getChainId(chain));
+        isValidChain[chainId] = valid;
+        if(valid){
+            chainAddressLength[chainId] = fromAddrLen;
+            chainUintsLength[chainId] = uintsLen;
+        }
+        else{
+            chainAddressLength[chainId] = 0;
+            chainUintsLength[chainId] = 0;
+        }
     }
 
     function setTaxParams(uint _taxRate, address _taxReceiver) public onlyGovernance {
@@ -323,6 +333,12 @@ contract BscVaultImpl is VaultStorage {
 
     function changeActivate(bool activate) public onlyPolicyAdmin {
         isActivated = activate;
+    }
+
+    function setSilentToken(address token, bool v) public onlyPolicyAdmin {
+        require(token != address(0));
+
+        silentTokenList[token] = v;
     }
 
     function setFeeGovernance(address payable _feeGovernance) public onlyGovernance {
@@ -431,6 +447,7 @@ contract BscVaultImpl is VaultStorage {
     function _depositToken(address token, string memory toChain, bytes memory toAddr, uint amount, bytes memory data) private onlyActivated {
         require(isValidChain[getChainId(toChain)]);
         require(amount != 0);
+        require(!silentTokenList[token]);
 
         uint8 decimal;
         if(token == address(0)){
@@ -482,8 +499,9 @@ contract BscVaultImpl is VaultStorage {
     function _depositNFT(address token, string memory toChain, bytes memory toAddr, uint tokenId, bytes memory data) private onlyActivated {
         require(isValidChain[getChainId(toChain)]);
         require(token != address(0));
-        require(IERC721(token).ownerOf(tokenId) == msg.sender);
+        require(!silentTokenList[token]);
 
+        require(IERC721(token).ownerOf(tokenId) == msg.sender);
         IERC721(token).transferFrom(msg.sender, address(this), tokenId);
         require(IERC721(token).ownerOf(tokenId) == address(this));
 
@@ -498,8 +516,8 @@ contract BscVaultImpl is VaultStorage {
         address hubContract,
         string memory fromChain,
         bytes memory fromAddr,
-        bytes memory toAddr,
-        bytes memory token,
+        address payable toAddr,
+        address token,
         bytes32[] memory bytes32s,
         uint[] memory uints,
         bytes memory data,
@@ -507,11 +525,15 @@ contract BscVaultImpl is VaultStorage {
         bytes32[] memory r,
         bytes32[] memory s
     ) public onlyActivated {
-        require(bytes32s.length >= 1);
-        require(uints.length >= 2);
+        require(bytes32s.length == 2);
+        require(uints.length == chainUintsLength[getChainId(fromChain)]);
+        require(uints[1] <= 100);
+        require(fromAddr.length == chainAddressLength[getChainId(fromChain)]);
+
         require(bytes32s[0] == sha256(abi.encodePacked(hubContract, chain, address(this))));
         require(isValidChain[getChainId(fromChain)]);
 
+        {
         bytes32 whash = sha256(abi.encodePacked(hubContract, fromChain, chain, fromAddr, toAddr, token, bytes32s, uints, data));
 
         require(!isUsedWithdrawal[whash]);
@@ -519,23 +541,21 @@ contract BscVaultImpl is VaultStorage {
 
         uint validatorCount = _validate(whash, v, r, s);
         require(validatorCount >= IGovernance(governance_()).required());
+        }
 
-        address payable _toAddr = bytesToAddress(toAddr);
-        address tokenAddress = bytesToAddress(token);
-
-        if(farms[tokenAddress] != address(0)){ // farmProxy 출금
-            IFarm(farms[tokenAddress]).withdraw(_toAddr, uints[0]);
+        if(farms[token] != address(0)){ // farmProxy 출금
+            IFarm(farms[token]).withdraw(toAddr, uints[0]);
         }
         else{ // 일반 출금
-            _transferToken(tokenAddress, _toAddr, uints[0]);
+            _transferToken(token, toAddr, uints[0]);
         }
 
-        if(isContract(_toAddr) && data.length != 0){
-            bool result = LibCallBridgeReceiver.callReceiver(true, gasLimitForBridgeReceiver, tokenAddress, uints[0], data, _toAddr);
-            emit BridgeReceiverResult(result, fromAddr, tokenAddress, data);
+        if(isContract(toAddr) && data.length != 0){
+            bool result = LibCallBridgeReceiver.callReceiver(true, gasLimitForBridgeReceiver, token, uints[0], data, toAddr);
+            emit BridgeReceiverResult(result, fromAddr, token, data);
         }
 
-        emit Withdraw(fromChain, fromAddr, toAddr, token, bytes32s, uints, data);
+        emit Withdraw(fromChain, fromAddr, abi.encodePacked(toAddr), abi.encodePacked(token), bytes32s, uints, data);
     }
 
     // Fix Data Info
@@ -545,8 +565,8 @@ contract BscVaultImpl is VaultStorage {
         address hubContract,
         string memory fromChain,
         bytes memory fromAddr,
-        bytes memory toAddr,
-        bytes memory token,
+        address payable toAddr,
+        address token,
         bytes32[] memory bytes32s,
         uint[] memory uints,
         bytes memory data,
@@ -554,11 +574,14 @@ contract BscVaultImpl is VaultStorage {
         bytes32[] memory r,
         bytes32[] memory s
     ) public onlyActivated {
-        require(bytes32s.length >= 1);
-        require(uints.length >= 2);
+        require(bytes32s.length == 2);
+        require(uints.length == chainUintsLength[getChainId(fromChain)]);
+        require(fromAddr.length == chainAddressLength[getChainId(fromChain)]);
+
         require(bytes32s[0] == sha256(abi.encodePacked(hubContract, chain, address(this))));
         require(isValidChain[getChainId(fromChain)]);
 
+        {
         bytes32 whash = sha256(abi.encodePacked("NFT", hubContract, fromChain, chain, fromAddr, toAddr, token, bytes32s, uints, data));
 
         require(!isUsedWithdrawal[whash]);
@@ -566,20 +589,18 @@ contract BscVaultImpl is VaultStorage {
 
         uint validatorCount = _validate(whash, v, r, s);
         require(validatorCount >= IGovernance(governance_()).required());
-
-        address payable _toAddr = bytesToAddress(toAddr);
-        address tokenAddress = bytesToAddress(token);
-
-        require(IERC721(tokenAddress).ownerOf(uints[1]) == address(this));
-        IERC721(tokenAddress).transferFrom(address(this), _toAddr, uints[1]);
-        require(IERC721(tokenAddress).ownerOf(uints[1]) == _toAddr);
-
-        if(isContract(_toAddr) && data.length != 0){
-            bool result = LibCallBridgeReceiver.callReceiver(false, gasLimitForBridgeReceiver, tokenAddress, uints[1], data, _toAddr);
-            emit BridgeReceiverResult(result, fromAddr, tokenAddress, data);
         }
 
-        emit WithdrawNFT(fromChain, fromAddr, toAddr, token, bytes32s, uints, data);
+        require(IERC721(token).ownerOf(uints[1]) == address(this));
+        IERC721(token).transferFrom(address(this), toAddr, uints[1]);
+        require(IERC721(token).ownerOf(uints[1]) == toAddr);
+
+        if(isContract(toAddr) && data.length != 0){
+            bool result = LibCallBridgeReceiver.callReceiver(false, gasLimitForBridgeReceiver, token, uints[1], data, toAddr);
+            emit BridgeReceiverResult(result, fromAddr, token, data);
+        }
+
+        emit WithdrawNFT(fromChain, fromAddr, abi.encodePacked(toAddr), abi.encodePacked(token), bytes32s, uints, data);
     }
 
     function _validate(bytes32 whash, uint8[] memory v, bytes32[] memory r, bytes32[] memory s) private view returns(uint){

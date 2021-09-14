@@ -108,6 +108,12 @@ class IconVaultContract(IconScoreBase):
         self._tax_rate = VarDB("tax_rate", db, value_type=int)
         self._tax_receiver = VarDB("tax_receiver", db, value_type=bytes)
 
+        self._policy_admin = VarDB("policy_admin", db, value_type=Address)
+        self._chain_fee = DictDB("chain_fee", db, value_type=int)
+        self._chain_fee_with_data = DictDB("chain_fee_with_data", db, value_type=int)
+        self._chain_uints_length = DictDB("chain_uints_length", db, value_type=int)
+        self._chain_address_length = DictDB("chain_address_length", db, value_type=int)
+
     def on_install(self, _governance: Address, _fee_governance: Address, _bridging_fee: int) -> None:
         super().on_install()
 
@@ -120,6 +126,12 @@ class IconVaultContract(IconScoreBase):
     def on_update(self) -> None:
         super().on_update()
 
+        self._policy_admin.set(EOA_ZERO)
+        self._chain_uints_length[self.getChainId("KLAYTN")] = 96
+        self._chain_address_length[self.getChainId("KLAYTN")] = 20
+        self._chain_uints_length[self.getChainId("ORBIT")] = 96
+        self._chain_address_length[self.getChainId("ORBIT")] = 20
+
     def require(self, execute_result: bool, msg: str):
         if not execute_result:
             revert(msg)
@@ -129,16 +141,12 @@ class IconVaultContract(IconScoreBase):
         return self._is_activated.get()
 
     @external(readonly=True)
-    def isValidChain(self, chain: str) -> bool:
-        return self._is_valid_chain[self.getChainId(chain)]
+    def isValidChain(self, chainSymbol: str) -> bool:
+        return self._is_valid_chain[self.getChainId(chainSymbol)]
 
     @external(readonly=True)
     def governance(self) -> Address:
         return self._governance.get()
-
-    @external(readonly=True)
-    def getVersion(self) -> str:
-        return "IconVault20210705"
 
     @external(readonly=True)
     def feeGovernance(self) -> Address:
@@ -199,6 +207,26 @@ class IconVaultContract(IconScoreBase):
     def convertBytesToAddress(self, account_bytes: bytes) -> Address:
         return Address.from_bytes(account_bytes)
 
+    @external(readonly=True)
+    def policyAdmin(self) -> Address:
+        return self._policy_admin.get()
+
+    @external(readonly=True)
+    def chainFee(self, chain: str) -> int:
+        return self._chain_fee[self.getChainId(chain)]
+
+    @external(readonly=True)
+    def chainFeeWithData(self, chain: str) -> int:
+        return self._chain_fee_with_data[self.getChainId(chain)]
+
+    @external(readonly=True)
+    def chainUintsLength(self, chain: str) -> int:
+        return self._chain_uints_length[self.getChainId(chain)]
+
+    @external(readonly=True)
+    def chainAddressLength(self, chain: str) -> int:
+        return self._chain_address_length[self.getChainId(chain)]
+
     @only_governance
     @external
     def transferOwnership(self, _governance: Address):
@@ -211,18 +239,23 @@ class IconVaultContract(IconScoreBase):
 
     @only_governance
     @external
-    def setBridgingFee(self, _bridging_fee: int):
-        self._bridging_fee.set(_bridging_fee)
+    def setValidChain(self, chainSymbol: str, valid: bool, fromAddrLen: int, uintsLen: int):
+        self.require(self._chain.get() != chainSymbol, "Error: invalid chain")
+        self._is_valid_chain[self.getChainId(chainSymbol)] = valid
+        if valid :
+            self._chain_uints_length[self.getChainId(chainSymbol)] = uintsLen
+            self._chain_address_length[self.getChainId(chainSymbol)] = fromAddrLen
+        else:
+            self._chain_uints_length[self.getChainId(chainSymbol)] = 0
+            self._chain_address_length[self.getChainId(chainSymbol)] = 0
 
     @only_governance
     @external
-    def setActivated(self, _is_activated: bool):
-        self._is_activated.set(_is_activated)
-
-    @only_governance
-    @external
-    def setValidChain(self, chain: str, valid: bool):
-        self._is_valid_chain[self.getChainId(chain)] = valid
+    def setChainLength(self, chainSymbol: str, fromAddrLen: int, uintsLen: int):
+        self.require(self._chain.get() != chainSymbol, "Error: invalid chain")
+        self.require(self._is_valid_chain[self.getChainId(chainSymbol)], "Error: invalid chain")
+        self._chain_uints_length[self.getChainId(chainSymbol)] = uintsLen
+        self._chain_address_length[self.getChainId(chainSymbol)] = fromAddrLen
 
     @only_governance
     @external
@@ -272,10 +305,32 @@ class IconVaultContract(IconScoreBase):
         else:
             self._farms[token] = EOA_ZERO
 
+    @only_governance
+    @external
+    def setPolicyAdmin(self, _policy_admin: Address):
+        self._policy_admin.set(_policy_admin)
+
+    @external
+    def setActivated(self, _is_activated: bool):
+        self.require(self.msg.sender == self._policy_admin.get(), "Error: Invalid Sender")
+        self._is_activated.set(_is_activated)
+
+    @external
+    def setChainFee(self, chainSymbol: str, fee: int, feeWithData: int):
+        self.require(self.msg.sender == self._policy_admin.get(), "Error: Invalid Sender")
+        self.require(self._is_valid_chain[self.getChainId(chainSymbol)], "Error: Invalid Chain")
+        self._chain_fee[self.getChainId(chainSymbol)] = fee
+        self._chain_fee_with_data[self.getChainId(chainSymbol)] = feeWithData
+
     @payable
     @external
     def deposit(self, toChain: str, toAddr: bytes, data: bytes = None):
-        fee = self._bridging_fee.get()
+        fee = 0
+        if data == None:
+            fee = self._chain_fee[self.getChainId(toChain)]
+        else:
+            self.require(len(data) != 0, "Error: invalid data")
+            fee = self._chain_fee_with_data[self.getChainId(toChain)]
         self.require(self.msg.value > fee, "Error: Not enough bridging fee")
         if fee != 0 :
             self.require(self._transferBridgingFee(fee), "Error: Transfer Bridging Fee Fail")
@@ -284,9 +339,15 @@ class IconVaultContract(IconScoreBase):
     @payable
     @external
     def depositToken(self, token: Address, toChain:str, toAddr: bytes, amount: int, data: bytes = None):
-        fee = self._bridging_fee.get()
+        self.require(token != ICX_ADDR, "Error: Invalid token address")
+
+        fee = 0
+        if data == None:
+            fee = self._chain_fee[self.getChainId(toChain)]
+        else:
+            self.require(len(data) != 0, "Error: invalid data")
+            fee = self._chain_fee_with_data[self.getChainId(toChain)]
         self.require(self.msg.value >= fee, "Error: Not enough bridging fee")
-        self.require(token != ICX_ADDR, "Error: invalid token address")
         if fee != 0 :
             self.require(self._transferBridgingFee(self.msg.value), "Error: Transfer Bridging Fee Fail")
         self._depositToken(token, toChain, toAddr, amount, data)
@@ -330,6 +391,16 @@ class IconVaultContract(IconScoreBase):
         self.require(token != ICX_ADDR and token != EOA_ZERO, "Error: Invalid Token Address")
         self.require(self.getNFTOwner(token, tokenId) != self.msg.sender, "Error: Owner check fail")
 
+        fee = 0
+        if data == None:
+            fee = self._chain_fee[self.getChainId(toChain)]
+        else:
+            self.require(len(data) != 0, "Error: invalid data")
+            fee = self._chain_fee_with_data[self.getChainId(toChain)]
+        self.require(self.msg.value >= fee, "Error: Not enough bridging fee")
+        if fee != 0 :
+            self.require(self._transferBridgingFee(self.msg.value), "Error: Transfer Bridging Fee Fail")
+
         self.require(self._transferFromNFT(token, self.msg.sender, self.address, tokenId), "Error: deposit fail")
         self.require(self.getNFTOwner(token, tokenId) == self.address, "Error: Owner check fail")
 
@@ -341,10 +412,13 @@ class IconVaultContract(IconScoreBase):
     @only_activated
     @external
     def withdraw(self, hubContract: bytes, fromChain: str, fromAddr: bytes, toAddr: bytes, token: bytes, bytes32s: bytes, uints: bytes, sigs: str, data: bytes = None):
+        self.require(len(hubContract) == 20, "Error: Invaild HubContract")
+        self.require(len(fromAddr) == self._chain_address_length[self.getChainId(fromChain)], "Error: Invalid fromAddr length")
         self.require(len(toAddr) == 21, "Error: Invalid toAddr length")
-        self.require(len(bytes32s) >= 32, "Error: Invalid bytes32s length")
+        self.require(len(token) == 21, "Error: Invalid token length")
+        self.require(len(bytes32s) == 64, "Error: Invalid bytes32s length")
         self.require(len(bytes32s) % 32 == 0, "Error: Invalid bytes32s length")
-        self.require(len(uints) >= 64, "Error: Invalid uints length")
+        self.require(len(uints) == self._chain_uints_length[self.getChainId(fromChain)], "Error: Invalid uints length")
         self.require(len(uints) % 32 == 0, "Error: Invalid bytes32s length")
         self.require(self._is_valid_chain[self.getChainId(fromChain)], "Error: Invalid fromChain")
 
@@ -380,10 +454,13 @@ class IconVaultContract(IconScoreBase):
     @only_activated
     @external
     def withdrawNFT(self, hubContract: bytes, fromChain: str, fromAddr: bytes, toAddr: bytes, token: bytes, bytes32s: bytes, uints: bytes, sigs: str, data: bytes = None):
+        self.require(len(hubContract) == 20, "Error: Invaild HubContract")
+        self.require(len(fromAddr) == self._chain_address_length[self.getChainId(fromChain)], "Error: Invalid fromAddr length")
         self.require(len(toAddr) == 21, "Error: Invalid toAddr length")
-        self.require(len(bytes32s) >= 32, "Error: Invalid bytes32s length")
+        self.require(len(token) == 21, "Error: Invalid token length")
+        self.require(len(bytes32s) == 64, "Error: Invalid bytes32s length")
         self.require(len(bytes32s) % 32 == 0, "Error: Invalid bytes32s length")
-        self.require(len(uints) >= 64, "Error: Invalid uints length")
+        self.require(len(uints) == self._chain_uints_length[self.getChainId(fromChain)], "Error: Invalid uints length")
         self.require(len(uints) % 32 == 0, "Error: Invalid bytes32s length")
         self.require(self._is_valid_chain[self.getChainId(fromChain)], "Error: Invalid fromChain")
 
@@ -416,9 +493,6 @@ class IconVaultContract(IconScoreBase):
     @external
     def tokenFallback(self, _from: Address, _value: int, _data: bytes):
         pass
-
-    def _setValidChain(self, chain: str):
-        self._is_valid_chain[self.getChainId(chain)] = True
 
     def _validate_signature(self, sigHash: bytes, sigs: str) -> bool:
         mig_score = self.create_interface_score(self._governance.get(), MultiSigWalletInterface)
