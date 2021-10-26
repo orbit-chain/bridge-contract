@@ -6,6 +6,10 @@ import "./OrbitMinter.sol";
 import "../token/standard/IKIP7.sol";
 import "../token/standard/IKIP17.sol";
 
+interface TokenInitializer {
+    function setTokenInfo(string calldata tokenName, string calldata tokenSymbol) external;
+}
+
 interface Deployer {
     function deployToken(uint8 decimals) external returns (address);
     function deployNFT() external returns (address);
@@ -182,10 +186,12 @@ contract OrbitMinterImpl is OrbitMinter, SafeMath {
 
         address tokenAddress;
         if(isFungible)
-            tokenAddress = Deployer(tokenDeployer).deployTokenWithInit(name, symbol, decimals);
+            tokenAddress = Deployer(tokenDeployer).deployToken(decimals);
         else
-            tokenAddress = Deployer(tokenDeployer).deployNFTWithInit(name, symbol);
+            tokenAddress = Deployer(tokenDeployer).deployNFT();
         require(tokenAddress != address(0));
+
+        TokenInitializer(tokenAddress).setTokenInfo(name, symbol);
 
         tokens[tokenSummary] = token;
         tokenAddr[tokenSummary] = tokenAddress;
