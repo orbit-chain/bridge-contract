@@ -11,7 +11,7 @@ contract ERC677Receiver {
     function onTokenTransfer(address _sender, uint _value, bytes memory _data) public;
 }
 
-contract KIP7 is KIP13, IKIP7 {
+contract KIP7ChainLink is KIP13, IKIP7 {
     event SetOwner(address owner);
     event SetMinter(address minter);
     event SetTokenInfo(string name, string symbol);

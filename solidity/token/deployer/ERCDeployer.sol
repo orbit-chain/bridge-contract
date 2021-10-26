@@ -4,7 +4,7 @@ import '../erc20/ERC20.sol';
 import '../erc721/ERC721Full.sol';
 import '../standard/Context.sol';
 
-contract Deployer is Context {
+contract ERCDeployer is Context {
     address private _owner;
     address private _nextOwner;
     address private _minter;
@@ -43,7 +43,7 @@ contract Deployer is Context {
     function minter() public view returns (address) {
         return _minter;
     }
-    
+
     function chain() public view returns (string memory) {
         return _chain;
     }

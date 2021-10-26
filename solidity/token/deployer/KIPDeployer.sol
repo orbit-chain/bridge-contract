@@ -3,7 +3,7 @@ pragma solidity 0.5.0;
 import '../kip7/KIP7.sol';
 import '../kip17/KIP17Full.sol';
 
-contract Deployer {
+contract KIPDeployer {
     address public owner;
     address public minter;
     address public implementation;
@@ -43,8 +43,8 @@ contract Deployer {
     }
 }
 
-contract DeployerImpl is Deployer {
-    constructor() public Deployer(address(0), address(0), address(0), ""){}
+contract DeployerImpl is KIPDeployer {
+    constructor() public KIPDeployer(address(0), address(0), address(0), ""){}
 
     modifier onlyMinter {
         require(msg.sender == minter);
@@ -84,14 +84,14 @@ contract DeployerImpl is Deployer {
     }
 }
 
-contract OrbitDeployerImpl is Deployer {
-    constructor() public Deployer(address(0), address(0), address(0), ""){}
+contract OrbitDeployerImpl is KIPDeployer {
+    constructor() public KIPDeployer(address(0), address(0), address(0), ""){}
 
     modifier onlyMinter {
         require(msg.sender == minter);
         _;
     }
-    
+
     function getVersion() public pure returns(string memory) {
         return "KIPOrbitMinter20210628";
     }
