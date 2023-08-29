@@ -1,24 +1,10 @@
 pragma solidity ^0.5.0;
 
 import "../utils/Owned.sol";
+import "./KlaytnMinter.storage.sol";
 
-contract KlaytnMinter is Owned {
+contract KlaytnMinter is Owned, KlaytnMinterStorage {
     string public constant chain = "KLAYTN";
-
-    bool public isActivated = true;
-
-    address payable public implementation;
-
-    uint public depositCount = 0;
-
-    mapping(bytes32 => bool) public isConfirmed;
-    mapping(bytes32 => bool) public isValidChain;
-
-    mapping(bytes32 => bytes) public tokens;
-    mapping(bytes32 => address) public tokenAddr;
-    mapping(address => bytes32) public tokenSummaries;
-
-    bytes32 public govId;
 
     constructor(address multisigAddr, address payable _implementation, bytes32 _govId) public {
         governance = multisigAddr;
@@ -30,6 +16,7 @@ contract KlaytnMinter is Owned {
         require(implementation != _newImp);
         implementation = _newImp;
     }
+    
 
     function () payable external {
         address impl = implementation;

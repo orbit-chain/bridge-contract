@@ -1,5 +1,7 @@
 pragma solidity 0.5.0;
 
+import "../multisig/MessageMultiSigWallet.sol";
+
 library SafeMath {
     function add(uint256 a, uint256 b) internal pure returns (uint256) {
         uint256 c = a + b;
@@ -132,6 +134,10 @@ interface OrbitBridgeReceiver {
 	function onNFTBridgeReceived(address _token, uint256 _tokenId, bytes calldata _data) external returns(uint);
 }
 
+interface OrbitHubLike {
+    function getBridgeContract(string calldata) external view returns(address);
+}
+
 library LibCallBridgeReceiver {
     function callReceiver(bool isFungible, uint gasLimitForBridgeReceiver, address tokenAddress, uint256 _int, bytes memory data, address toAddr) internal returns (bool, bytes memory){
         bool result;
@@ -152,7 +158,7 @@ library LibCallBridgeReceiver {
     }
 }
 
-contract EthVaultStorage {
+contract OrbitVaultStorage {
     /////////////////////////////////////////////////////////////////////////
     // MultiSigWallet.sol
     uint constant public MAX_OWNER_COUNT = 50;
@@ -168,24 +174,29 @@ contract EthVaultStorage {
         bytes data;
         bool executed;
     }
+    mapping (bytes32 => bool) public validatedHashs;
+    mapping (uint => bytes32) public hashs;
+    uint public hashCount = 0;
+    mapping (bytes32 => uint) public validateCount;
+    mapping (bytes32 => mapping(uint => uint8)) public vSigs;
+    mapping (bytes32 => mapping(uint => bytes32)) public rSigs;
+    mapping (bytes32 => mapping(uint => bytes32)) public sSigs;
+    mapping (bytes32 => mapping(uint => address)) public hashValidators;
     /////////////////////////////////////////////////////////////////////////
 
     /////////////////////////////////////////////////////////////////////////
-    // EthVault.sol
-    string public constant chain = "ETH";
-    bool public isActivated = true;
+    // Vault
+    string public constant chain = "ORBIT";
+    bool public isActivated;
     address payable public implementation;
-    address public tetherAddress;
-    uint public depositCount = 0;
+    uint public depositCount;
     mapping(bytes32 => bool) public isUsedWithdrawal;
     mapping(bytes32 => address) public tokenAddr;
     mapping(address => bytes32) public tokenSummaries;
     mapping(bytes32 => bool) public isValidChain;
-    /////////////////////////////////////////////////////////////////////////
 
-    /////////////////////////////////////////////////////////////////////////
-    // EthVault.impl.sol
-    uint public bridgingFee = 0;
+    uint public bridgingFee;
+    address public feeTokenAddress;
     address payable public feeGovernance;
     mapping(address => bool) public silentTokenList;
     mapping(address => address payable) public farms;
@@ -199,17 +210,15 @@ contract EthVaultStorage {
 
     mapping(bytes32 => uint256) public chainUintsLength;
     mapping(bytes32 => uint256) public chainAddressLength;
+    /////////////////////////////////////////////////////////////////////////
 
-    address public dai;
-    address public edai;
-
-    mapping(address => bool) public nonTaxable;
-    mapping(address => address) public wrappedDeposit;
-    mapping(address => address) public unwrappedWithdraw;
+    /////////////////////////////////////////////////////////////////////////
+    // impl
+    address public hubContract;
     /////////////////////////////////////////////////////////////////////////
 }
 
-contract EthVaultImpl is EthVaultStorage {
+contract OrbitVaultImpl is OrbitVaultStorage {
     using SafeERC20 for IERC20;
     using SafeMath for uint;
 
@@ -220,6 +229,9 @@ contract EthVaultImpl is EthVaultStorage {
     event WithdrawNFT(string fromChain, bytes fromAddr, bytes toAddr, bytes token, bytes32[] bytes32s, uint[] uints, bytes data);
 
     event BridgeReceiverResult(bool success, bytes fromAddress, address tokenAddress, bytes data);
+
+    event TaxPay(address fromAddr, address taxAddr, address tokenAddr, uint amount, uint tax);
+
     event OnBridgeReceived(bool result, bytes returndata, bytes fromAddr, address tokenAddress, bytes data);
 
     modifier onlyActivated {
@@ -232,6 +244,11 @@ contract EthVaultImpl is EthVaultStorage {
         _;
     }
 
+    modifier onlyBridgeContract {
+        require(msg.sender == OrbitHubLike(hubContract).getBridgeContract(chain));
+        _;
+    }
+
     modifier onlyPolicyAdmin {
         require(msg.sender == policyAdmin);
         _;
@@ -240,7 +257,7 @@ contract EthVaultImpl is EthVaultStorage {
     constructor() public payable { }
 
     function getVersion() public pure returns(string memory){
-        return "EthVault20230511A";
+        return "OrbitVault20221020";
     }
 
     function getChainId(string memory _chain) public view returns(bytes32){
@@ -273,6 +290,11 @@ contract EthVaultImpl is EthVaultStorage {
         require(_taxReceiver != address(0));
         taxRate = _taxRate;
         taxReceiver = _taxReceiver;
+    }
+
+    function setHubContract(address _hubContract) public onlyWallet {
+        require(_hubContract != address(0));
+        hubContract = _hubContract;
     }
 
     function setPolicyAdmin(address _policyAdmin) public onlyWallet {
@@ -309,26 +331,6 @@ contract EthVaultImpl is EthVaultStorage {
         gasLimitForBridgeReceiver = _gasLimitForBridgeReceiver;
     }
 
-    function setNonTaxableAddress(address target, bool valid) public onlyWallet {
-        nonTaxable[target] = valid;
-    }
-
-    function setWrappedAddress(bool set, address token, address wrapped) public onlyWallet {
-        require(token != address(0) && wrapped != address(0));
-        require(token != dai && wrapped != edai);
-
-        if(set){
-            require(wrappedDeposit[token] == address(0) && unwrappedWithdraw[wrapped] == address(0));
-            wrappedDeposit[token] = wrapped;
-            unwrappedWithdraw[wrapped] = token;
-        }
-        else{
-            require(wrappedDeposit[token] == wrapped && unwrappedWithdraw[wrapped] == token);
-            wrappedDeposit[token] = address(0);
-            unwrappedWithdraw[wrapped] = address(0);
-        }
-    }
-
     function addFarm(address token, address payable proxy) public onlyWallet {
         require(farms[token] == address(0));
         require(IFarm(proxy).orbitVault() == address(this));
@@ -355,36 +357,11 @@ contract EthVaultImpl is EthVaultStorage {
         _transferToken(token, msg.sender, amount);
     }
 
-    function deposit(string memory toChain, bytes memory toAddr) payable public {
-        uint256 fee = chainFee[getChainId(toChain)];
-        if(fee != 0 && !nonTaxable[msg.sender]){
-            require(msg.value > fee);
-            _transferToken(address(0), feeGovernance, fee);
-        }
-
-        _depositToken(address(0), toChain, toAddr, !nonTaxable[msg.sender] ? (msg.value).sub(fee) : msg.value, "");
-    }
-
-    function deposit(string memory toChain, bytes memory toAddr, bytes memory data) payable public {
-        require(data.length != 0);
-
-        uint256 fee = chainFeeWithData[getChainId(toChain)];
-        if(fee != 0 && !nonTaxable[msg.sender]){
-            require(msg.value > fee);
-            _transferToken(address(0), feeGovernance, fee);
-        }
-
-        _depositToken(address(0), toChain, toAddr, !nonTaxable[msg.sender] ? (msg.value).sub(fee) : msg.value, data);
-    }
-
     function depositToken(address token, string memory toChain, bytes memory toAddr, uint amount) public payable {
         require(token != address(0));
 
         uint256 fee = chainFee[getChainId(toChain)];
-        if(fee != 0 && !nonTaxable[msg.sender]){
-            require(msg.value >= fee);
-            _transferToken(address(0), feeGovernance, msg.value);
-        }
+        _transferBridgingFee(fee);
 
         _depositToken(token, toChain, toAddr, amount, "");
     }
@@ -394,10 +371,7 @@ contract EthVaultImpl is EthVaultStorage {
         require(data.length != 0);
 
         uint256 fee = chainFeeWithData[getChainId(toChain)];
-        if(fee != 0 && !nonTaxable[msg.sender]){
-            require(msg.value >= fee);
-            _transferToken(address(0), feeGovernance, msg.value);
-        }
+        _transferBridgingFee(fee);
 
         _depositToken(token, toChain, toAddr, amount, data);
     }
@@ -405,7 +379,7 @@ contract EthVaultImpl is EthVaultStorage {
     function _depositToken(address token, string memory toChain, bytes memory toAddr, uint amount, bytes memory data) private onlyActivated {
         require(isValidChain[getChainId(toChain)]);
         require(amount != 0);
-        require(!silentTokenList[token] && unwrappedWithdraw[token] == address(0));
+        require(!silentTokenList[token]);
 
         uint8 decimal;
         if(token == address(0)){
@@ -414,18 +388,11 @@ contract EthVaultImpl is EthVaultStorage {
         else{
             IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
             decimal = IERC20(token).decimals();
-
-            if(token == dai){
-                token = edai;
-            }
-            else if(wrappedDeposit[token] != address(0)){
-                token = wrappedDeposit[token];
-            }
         }
         require(decimal > 0);
 
-        if(taxRate > 0 && taxReceiver != address(0) && !nonTaxable[msg.sender]){
-            uint tax = _payTax(token, amount, decimal);
+        if(taxRate > 0 && taxReceiver != address(0)){
+            uint tax = _payTax(token, amount);
             amount = amount.sub(tax);
         }
 
@@ -435,7 +402,7 @@ contract EthVaultImpl is EthVaultStorage {
 
     function depositNFT(address token, string memory toChain, bytes memory toAddr, uint tokenId) public payable {
         uint256 fee = chainFee[getChainId(toChain)];
-        if(fee != 0 && !nonTaxable[msg.sender]){
+        if(fee != 0){
             require(msg.value >= fee);
             _transferToken(address(0), feeGovernance, msg.value);
         }
@@ -447,7 +414,7 @@ contract EthVaultImpl is EthVaultStorage {
         require(data.length != 0);
 
         uint256 fee = chainFeeWithData[getChainId(toChain)];
-        if(fee != 0 && !nonTaxable[msg.sender]){
+        if(fee != 0){
             require(msg.value >= fee);
             _transferToken(address(0), feeGovernance, msg.value);
         }
@@ -472,18 +439,14 @@ contract EthVaultImpl is EthVaultStorage {
     ///@param bytes32s [0]:govId, [1]:txHash
     ///@param uints [0]:amount, [1]:decimal
     function withdraw(
-        address hubContract,
         string memory fromChain,
         bytes memory fromAddr,
         address payable toAddr,
         address token,
         bytes32[] memory bytes32s,
         uint[] memory uints,
-        bytes memory data,
-        uint8[] memory v,
-        bytes32[] memory r,
-        bytes32[] memory s
-    ) public onlyActivated {
+        bytes memory data
+    ) public onlyBridgeContract {
         require(bytes32s.length == 2);
         require(uints.length == chainUintsLength[getChainId(fromChain)]);
         require(uints[1] <= 100);
@@ -498,17 +461,8 @@ contract EthVaultImpl is EthVaultStorage {
         require(!isUsedWithdrawal[whash]);
         isUsedWithdrawal[whash] = true;
 
-        uint validatorCount = _validate(whash, v, r, s);
-        require(validatorCount >= required);
-        }
-
-        emit Withdraw(fromChain, fromAddr, abi.encodePacked(toAddr), abi.encodePacked(token), bytes32s, uints, data);
-
-        if(token == edai){
-            token = dai;
-        }
-        else if(unwrappedWithdraw[token] != address(0)){
-            token = unwrappedWithdraw[token];
+        (uint validatorCount, uint requireCount) = _validate(whash);
+        require(validatorCount >= requireCount);
         }
 
         _transferToken(token, toAddr, uints[0]);
@@ -518,24 +472,22 @@ contract EthVaultImpl is EthVaultStorage {
             emit BridgeReceiverResult(result, fromAddr, token, data);
             emit OnBridgeReceived(result, returndata, fromAddr, token, data);
         }
+
+        emit Withdraw(fromChain, fromAddr, abi.encodePacked(toAddr), abi.encodePacked(token), bytes32s, uints, data);
     }
 
     // Fix Data Info
     ///@param bytes32s [0]:govId, [1]:txHash
     ///@param uints [0]:amount, [1]:tokenId
     function withdrawNFT(
-        address hubContract,
         string memory fromChain,
         bytes memory fromAddr,
         address payable toAddr,
         address token,
         bytes32[] memory bytes32s,
         uint[] memory uints,
-        bytes memory data,
-        uint8[] memory v,
-        bytes32[] memory r,
-        bytes32[] memory s
-    ) public onlyActivated {
+        bytes memory data
+    ) public onlyBridgeContract {
         require(bytes32s.length == 2);
         require(uints.length == chainUintsLength[getChainId(fromChain)]);
         require(fromAddr.length == chainAddressLength[getChainId(fromChain)]);
@@ -549,8 +501,8 @@ contract EthVaultImpl is EthVaultStorage {
         require(!isUsedWithdrawal[whash]);
         isUsedWithdrawal[whash] = true;
 
-        uint validatorCount = _validate(whash, v, r, s);
-        require(validatorCount >= required);
+        (uint validatorCount, uint requireCount) = _validate(whash);
+        require(validatorCount >= requireCount);
         }
 
         require(IERC721(token).ownerOf(uints[1]) == address(this));
@@ -566,33 +518,16 @@ contract EthVaultImpl is EthVaultStorage {
         emit WithdrawNFT(fromChain, fromAddr, abi.encodePacked(toAddr), abi.encodePacked(token), bytes32s, uints, data);
     }
 
-    function _validate(bytes32 whash, uint8[] memory v, bytes32[] memory r, bytes32[] memory s) private view returns(uint){
-        uint validatorCount = 0;
-        address[] memory vaList = new address[](owners.length);
-
-        uint i=0;
-        uint j=0;
-
-        for(i; i<v.length; i++){
-            address va = ecrecover(whash,v[i],r[i],s[i]);
-            if(isOwner[va]){
-                for(j=0; j<validatorCount; j++){
-                    require(vaList[j] != va);
-                }
-
-                vaList[validatorCount] = va;
-                validatorCount += 1;
-            }
-        }
-
-        return validatorCount;
+    function _validate(bytes32 hash) private view returns(uint, uint) {
+        MessageMultiSigWallet mig = MessageMultiSigWallet(address(this));
+        return (mig.validateCount(hash), mig.required());
     }
 
-    function _payTax(address token, uint amount, uint8 decimal) private returns (uint tax) {
+    function _payTax(address token, uint amount) private returns (uint tax) {
         tax = amount.mul(taxRate).div(10000);
         if(tax > 0){
-            depositCount = depositCount + 1;
-            emit Deposit("ORBIT", msg.sender, abi.encodePacked(taxReceiver), token, decimal, tax, depositCount, "");
+            if(!IERC20(token).transfer(taxReceiver, tax)) revert();
+            emit TaxPay(msg.sender, taxReceiver, token, amount, tax);
         }
     }
 
@@ -606,6 +541,18 @@ contract EthVaultImpl is EthVaultStorage {
             require(IERC20(token).balanceOf(address(this)) >= amount);
             IERC20(token).safeTransfer(destination, amount);
         }
+    }
+
+    function _transferBridgingFee(uint feeAmount) private {
+        if (feeTokenAddress == address(0)) {
+            return;
+        }
+
+        if (feeGovernance == address(0)) {
+            return;
+        }
+
+        if(!IERC20(feeTokenAddress).transferFrom(msg.sender, feeGovernance, feeAmount)) revert();
     }
 
     function isContract(address _addr) private view returns (bool){
@@ -622,6 +569,6 @@ contract EthVaultImpl is EthVaultStorage {
         }
     }
 
-    function () payable external{
+    function () external{
     }
 }

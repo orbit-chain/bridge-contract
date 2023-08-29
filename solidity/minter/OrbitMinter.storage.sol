@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.6.12;
+pragma solidity 0.5.0;
 
-contract MinterStorage {
-    string public chain;
+contract OrbitMinterStorage {
+    string public constant chain = "";
+    
     bool public isActivated = true;
+
+    address payable public implementation;
 
     uint public depositCount = 0;
 
@@ -17,14 +20,17 @@ contract MinterStorage {
     bytes32 public govId;
 
     uint public bridgingFee;
-    uint public bridgingFeeWithData;
-    uint public gasLimitForBridgeReceiver;
+    address public feeTokenAddress;
     address payable public feeGovernance;
 
-    uint public taxRate = 10; // 0.01% interval
-    address public taxReceiver = 0xE9f3604B85c9672728eEecf689cf1F0cF7Dd03F2;
+    uint public taxRate;
+    address public taxReceiver;
 
     address public tokenDeployer;
+    address public hubContract;
+    
+    uint public bridgingFeeWithData;
+    uint public gasLimitForBridgeReceiver;
 
     mapping (address => uint) public minRequestAmount;
 
@@ -40,12 +46,8 @@ contract MinterStorage {
 
     mapping(address => bool) public nonTaxable;
     
-    // tokenSummary => minterAddress
-    // default: address(0)
     mapping(bytes32 => address) public tokenMinter;
 
-    // oBUSD => multichain BUSD
-    // oBNB => multichain BNB
     mapping(address => address) public migrationList;
     
     address public setterAddress;
@@ -57,4 +59,5 @@ contract MinterStorage {
     }
 
     mapping (address => SwapInfo) public swapMap;
+    
 }

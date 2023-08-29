@@ -92,7 +92,7 @@ library Address {
     }
 
     function functionCall(address target, bytes memory data) internal returns (bytes memory) {
-      return functionCall(target, data, "Address: low-level call failed");
+        return functionCall(target, data, "Address: low-level call failed");
     }
 
     function functionCall(address target, bytes memory data, string memory errorMessage) internal returns (bytes memory) {
@@ -171,9 +171,7 @@ library SafeERC20 {
     }
 
     function safeApprove(IERC20 token, address spender, uint256 value) internal {
-        require((value == 0) || (token.allowance(address(this), spender) == 0),
-            "SafeERC20: approve from non-zero to non-zero allowance"
-        );
+        require((value == 0) || (token.allowance(address(this), spender) == 0), "SafeERC20: approve from non-zero to non-zero allowance");
         _callOptionalReturn(token, abi.encodeWithSelector(token.approve.selector, spender, value));
     }
 
@@ -242,17 +240,16 @@ interface IProxy {
 
 interface Deployer {
     function deployToken(uint8 decimals) external returns (address);
-    function deployNFT() external returns (address);
     function deployTokenWithInit(string memory name, string memory symbol, uint8 decimals) external returns (address);
-    function deployNFTWithInit(string memory name, string memory symbol) external returns (address);
+    function deployNFTWithInit(string memory name, string memory symbol, string memory baseURI, address nftOwner) external returns (address);
 }
 
 interface OrbitBridgeReceiver {
     function onTokenBridgeReceived(address _token, uint256 _value, bytes calldata _data) external returns(uint);
-	function onNFTBridgeReceived(address _token, uint256 _tokenId, bytes calldata _data) external returns(uint);
+    function onNFTBridgeReceived(address _token, uint256 _tokenId, bytes calldata _data) external returns(uint);
 }
 
-contract HecoMinterImpl is MinterStorage {
+contract MinterImpl is MinterStorage {
     using SafeERC20 for IERC20;
     using SafeMath for uint;
 
@@ -262,21 +259,12 @@ contract HecoMinterImpl is MinterStorage {
     event SwapRequest(string toChain, address fromAddr, bytes toAddr, bytes token, address tokenAddress, uint8 decimal, uint amount, uint depositId, bytes data);
     event SwapRequestNFT(string toChain, address fromAddr, bytes toAddr, bytes token, address tokenAddress, uint tokenId, uint amount, uint depositId, bytes data);
     event BridgeReceiverResult(bool success, bytes fromAddr, address tokenAddress, bytes data);
+    event OnBridgeReceived(bool result, bytes returndata, bytes fromAddr, address tokenAddress, bytes data);
 
     constructor() public payable { }
 
-    modifier onlyGovernance {
-        require(msg.sender == governance_());
-        _;
-    }
-
     modifier onlyActivated {
         require(isActivated);
-        _;
-    }
-
-    modifier onlyPolicyAdmin {
-        require(msg.sender == policyAdmin);
         _;
     }
 
@@ -289,7 +277,7 @@ contract HecoMinterImpl is MinterStorage {
     }
 
     function getVersion() public pure returns(string memory){
-        return "HecoMinter20210817A";
+        return "Minter20230329";
     }
 
     function getTokenAddress(bytes memory token) public view returns(address){
@@ -301,111 +289,9 @@ contract HecoMinterImpl is MinterStorage {
         return sha256(abi.encodePacked(address(this), chainSymbol));
     }
 
-    function setChainSymbol(string memory _chain) public onlyGovernance {
-        chain = _chain;
-    }
-
-    function setValidChain(string memory _chain, bool valid, uint fromAddrLen, uint uintsLen) public onlyGovernance {
-        bytes32 chainId = getChainId(_chain);
-        require(chainId != getChainId(chain));
-        isValidChain[chainId] = valid;
-        if(valid){
-            chainAddressLength[chainId] = fromAddrLen;
-            chainUintsLength[chainId] = uintsLen;
-        }
-        else{
-            chainAddressLength[chainId] = 0;
-            chainUintsLength[chainId] = 0;
-        }
-    }
-
-    function setGovId(bytes32 _govId) public onlyGovernance {
-        govId = _govId;
-    }
-
-    function setTaxRate(uint _taxRate) public onlyGovernance {
-        require(_taxRate < 10000);
-        taxRate = _taxRate;
-    }
-
-    function setTaxReceiver(address _taxReceiver) public onlyGovernance {
-        require(_taxReceiver != address(0));
-        taxReceiver = _taxReceiver;
-    }
-
-    function setTokenDeployer(address _deployer) public onlyGovernance {
-        require(_deployer != address(0));
-        tokenDeployer = _deployer;
-    }
-
-    function setPolicyAdmin(address _policyAdmin) public onlyGovernance {
-        require(_policyAdmin != address(0));
-        policyAdmin = _policyAdmin;
-    }
-
-    function changeActivate(bool activate) public onlyPolicyAdmin {
-        isActivated = activate;
-    }
-
-    function setMinRequestSwapAmount(address _token, uint amount) public onlyPolicyAdmin {
-        require(_token != address(0));
-        require(tokenSummaries[_token] != 0);
-        minRequestAmount[_token] = amount;
-    }
-
-    function setChainFee(string memory chainSymbol, uint256 _fee, uint256 _feeWithData) public onlyPolicyAdmin {
-        bytes32 chainId = getChainId(chainSymbol);
-        require(isValidChain[chainId]);
-
-        chainFee[chainId] = _fee;
-        chainFeeWithData[chainId] = _feeWithData;
-    }
-
-    function setFeeGovernance(address payable _feeGovernance) public onlyGovernance {
-        require(_feeGovernance != address(0));
-        feeGovernance = _feeGovernance;
-    }
-
-    function setGasLimitForBridgeReceiver(uint256 _gasLimitForBridgeReceiver) public onlyPolicyAdmin {
-        gasLimitForBridgeReceiver = _gasLimitForBridgeReceiver;
-    }
-
-    function setSilentToken(address token, bool v) public onlyPolicyAdmin {
-        require(token != address(0));
-
-        silentTokenList[token] = v;
-    }
-
-    function setTokenLength(uint256 tokenLen) public onlyGovernance {
-        require(tokenLen != 0);
-        chainTokenLength = tokenLen;
-    }
-
-    function addToken(bytes memory token, address tokenAddress) public onlyGovernance {
-        require(tokenSummaries[tokenAddress] == 0);
-
-        bytes32 tokenSummary = sha256(abi.encodePacked(chain, token));
-        require(tokenAddr[tokenSummary] == address(0));
-
-        tokens[tokenSummary] = token;
-        tokenAddr[tokenSummary] = tokenAddress;
-        tokenSummaries[tokenAddress] = tokenSummary;
-    }
-
-    function addTokenWithDeploy(bool isFungible, bytes memory token, string memory name, string memory symbol, uint8 decimals) public onlyPolicyAdmin {
-        bytes32 tokenSummary = sha256(abi.encodePacked(chain, token));
-        require(tokenAddr[tokenSummary] == address(0));
-
-        address tokenAddress;
-        if(isFungible)
-            tokenAddress = Deployer(tokenDeployer).deployTokenWithInit(name, symbol, decimals);
-        else
-            tokenAddress = Deployer(tokenDeployer).deployNFTWithInit(name, symbol);
-        require(tokenAddress != address(0));
-
-        tokens[tokenSummary] = token;
-        tokenAddr[tokenSummary] = tokenAddress;
-        tokenSummaries[tokenAddress] = tokenSummary;
+    function changeSetter(address newAddr) public {
+        require(msg.sender == admin_());
+        setterAddress = newAddr;
     }
 
     // Fix Data Info
@@ -440,24 +326,22 @@ contract HecoMinterImpl is MinterStorage {
         require(validatorCount >= IGovernance(governance_()).required());
 
         address tokenAddress = getTokenAddress(token, uints[1]);
-        if(tokenAddress == address(0)){
-            revert();
-        }else{
-            IERC20(tokenAddress).safeMint(toAddr, uints[0]);
-        }
+        require(tokenAddress != address(0));
 
-        if(isContract(toAddr) && data.length != 0){
-            bool result;
-            bytes memory callbytes = abi.encodeWithSignature("onTokenBridgeReceived(address,uint256,bytes)", tokenAddress, uints[0], data);
-            if (gasLimitForBridgeReceiver > 0) {
-                (result, ) = toAddr.call{gas : gasLimitForBridgeReceiver}(callbytes);
-            } else {
-                (result, ) = toAddr.call(callbytes);
-            }
-            emit BridgeReceiverResult(result, fromAddr, tokenAddress, data);
-        }
+        mint(tokenAddress, toAddr, uints[0]);
+
+        if(isContract(toAddr) && data.length != 0)
+            callReceiver(fromAddr, toAddr, tokenAddress, false, uints[0], data);
+
 
         emit Swap(fromChain, fromAddr, abi.encodePacked(toAddr), tokenAddress, bytes32s, uints, data);
+    }
+
+    function mint(address tokenAddress, address to, uint amount) private {
+        address minter = tokenMinter[tokenSummaries[tokenAddress]];
+        address minterable = minter == address(0) ? tokenAddress : minter;
+
+        IERC20(minterable).safeMint(to, amount);
     }
 
     // Fix Data Info
@@ -498,27 +382,31 @@ contract HecoMinterImpl is MinterStorage {
             require(IERC721(nftAddress).ownerOf(uints[1]) == toAddr);
         }
 
-        if(isContract(toAddr) && data.length != 0){
-            bool result;
-            bytes memory callbytes = abi.encodeWithSignature("onNFTBridgeReceived(address,uint256,bytes)", nftAddress, uints[1], data);
-            if (gasLimitForBridgeReceiver > 0) {
-                (result, ) = toAddr.call{gas : gasLimitForBridgeReceiver}(callbytes);
-            } else {
-                (result, ) = toAddr.call(callbytes);
-            }
-            emit BridgeReceiverResult(result, fromAddr, nftAddress, data);
-        }
+        if(isContract(toAddr) && data.length != 0)
+            callReceiver(fromAddr, toAddr, nftAddress, true, uints[1], data);
 
         emit SwapNFT(fromChain, fromAddr, abi.encodePacked(toAddr), nftAddress, bytes32s, uints, data);
     }
 
+    function callReceiver(bytes memory fromAddr, address toAddr, address token, bool isNFT, uint256 uints, bytes memory data) private {
+        bool result;
+        bytes memory returndata;
+        string memory callSig = isNFT ? "onNFTBridgeReceived(address,uint256,bytes)" : "onTokenBridgeReceived(address,uint256,bytes)";
+        bytes memory callbytes = abi.encodeWithSignature(callSig, token, uints, data);
+        if (gasLimitForBridgeReceiver > 0) {
+            (result, returndata) = toAddr.call{gas : gasLimitForBridgeReceiver}(callbytes);
+        } else {
+            (result, returndata) = toAddr.call(callbytes);
+        }
+        emit BridgeReceiverResult(result, fromAddr, token, data);
+        emit OnBridgeReceived(result, returndata, fromAddr, token, data);
+    }
+
     function requestSwap(address tokenAddress, string memory toChain, bytes memory toAddr, uint amount) public payable onlyActivated {
-        require(msg.value >= chainFee[getChainId(toChain)]);
         _requestSwap(tokenAddress, toChain, toAddr, amount, "");
     }
 
     function requestSwap(address tokenAddress, string memory toChain, bytes memory toAddr, uint amount, bytes memory data) public payable onlyActivated {
-        require(msg.value >= chainFeeWithData[getChainId(toChain)]);
         require(data.length != 0);
         _requestSwap(tokenAddress, toChain, toAddr, amount, data);
     }
@@ -529,7 +417,24 @@ contract HecoMinterImpl is MinterStorage {
         require(amount > 0);
         require(!silentTokenList[tokenAddress]);
 
-        _transferBridgingFee(msg.value);
+        if(!nonTaxable[msg.sender]){
+            uint fee = data.length == 0 ? chainFee[getChainId(toChain)] : chainFeeWithData[getChainId(toChain)];
+            require(msg.value >= fee);
+
+            _transferBridgingFee(msg.value);
+        }
+
+        SwapInfo memory info = swapMap[tokenAddress];
+
+        if(info.oToken != address(0) && tokenSummaries[info.oToken] != 0) {
+            if(info.mintable) {
+                IERC20(info.oToken).safeMint(msg.sender, amount);
+            } else {
+                IERC20(info.oToken).transferFrom(info.adapter, msg.sender, amount);
+            }
+            IERC20(tokenAddress).transferFrom(msg.sender, info.adapter, amount);
+            tokenAddress = info.oToken;
+        }
 
         bytes32 tokenSummary = tokenSummaries[tokenAddress];
         require(tokenSummaries[tokenAddress] != 0);
@@ -537,12 +442,15 @@ contract HecoMinterImpl is MinterStorage {
         bytes memory token = tokens[tokenSummary];
         require(token.length != 0);
 
-        IERC20(tokenAddress).safeBurn(msg.sender, amount);
+        address minter = tokenMinter[tokenSummary];
+        address minterable = minter == address(0) ? tokenAddress : minter;
+
+        IERC20(minterable).safeBurn(msg.sender, amount);
 
         uint8 decimal = IERC20(tokenAddress).decimals();
         require(decimal > 0);
 
-        if(taxRate > 0 && taxReceiver != address(0)){
+        if(taxRate > 0 && taxReceiver != address(0) && !nonTaxable[msg.sender]){
             uint tax = _payTax(token, tokenAddress, amount, decimal);
             amount = amount.sub(tax);
         }
@@ -553,12 +461,10 @@ contract HecoMinterImpl is MinterStorage {
     }
 
     function requestSwapNFT(address nftAddress, uint tokenId, string memory toChain, bytes memory toAddr) public payable onlyActivated {
-        require(msg.value >= chainFee[getChainId(toChain)]);
         _requestSwapNFT(nftAddress, tokenId, toChain, toAddr, "");
     }
 
     function requestSwapNFT(address nftAddress, uint tokenId, string memory toChain, bytes memory toAddr, bytes memory data) public payable onlyActivated {
-        require(msg.value >= chainFeeWithData[getChainId(toChain)]);
         require(data.length != 0);
         _requestSwapNFT(nftAddress, tokenId, toChain, toAddr, data);
     }
@@ -568,7 +474,12 @@ contract HecoMinterImpl is MinterStorage {
         require(nftAddress != address(0));
         require(!silentTokenList[nftAddress]);
 
-        _transferBridgingFee(msg.value);
+        if(!nonTaxable[msg.sender]){
+            uint fee = data.length == 0 ? chainFee[getChainId(toChain)] : chainFeeWithData[getChainId(toChain)];
+            require(msg.value >= fee);
+
+            _transferBridgingFee(msg.value);
+        }
 
         bytes32 tokenSummary = tokenSummaries[nftAddress];
         require(tokenSummaries[nftAddress] != 0);
@@ -618,26 +529,17 @@ contract HecoMinterImpl is MinterStorage {
         }
     }
 
-    function getNFTAddress(bytes memory token) private returns(address nftAddress){
+    function getNFTAddress(bytes memory token) private view returns(address nftAddress){
         bytes32 tokenSummary = sha256(abi.encodePacked(chain, token));
 
         nftAddress = tokenAddr[tokenSummary];
-        if(nftAddress == address(0)){
-            require(tokenDeployer != address(0));
-            nftAddress = Deployer(tokenDeployer).deployNFT();
-            tokens[tokenSummary] = token;
-            tokenAddr[tokenSummary] = nftAddress;
-            tokenSummaries[nftAddress] = tokenSummary;
-        }
     }
 
     function _transferBridgingFee(uint amount) private {
-        require(feeGovernance != address(0));
+        if(feeGovernance == address(0) || amount == 0) return;
 
         (bool result,) = feeGovernance.call{value: amount}("");
-        if(!result){
-            revert();
-        }
+        require(result);
     }
 
     function _payTax(bytes memory token, address tokenAddress, uint amount, uint8 decimal) private returns (uint tax) {
@@ -656,12 +558,34 @@ contract HecoMinterImpl is MinterStorage {
         return (size > 0);
     }
 
-    function bytesToAddress(bytes memory bys) private pure returns (address addr) {
-        assembly {
-            addr := mload(add(bys,20))
-        }
+    function migrate(address migrated, uint amount) public {
+        require(IERC20(migrated).balanceOf(msg.sender) >= amount);
+
+        address token = migrationList[migrated];
+        require(token != address(0));
+
+        bytes32 tokenSummary = tokenSummaries[token];
+        address minter = tokenMinter[tokenSummary]; // co-minter
+        require(minter != address(0));
+
+        IERC20(migrated).safeBurn(msg.sender, amount);
+        IERC20(minter).safeMint(msg.sender, amount);
     }
 
     receive () external payable { revert(); }
-    fallback () external payable { revert(); }
+    fallback () external {
+        address impl = setterAddress;
+        require(impl != address(0));
+        assembly {
+            let ptr := mload(0x40)
+            calldatacopy(ptr, 0, calldatasize())
+            let result := delegatecall(gas(), impl, ptr, calldatasize(), 0, 0)
+            let size := returndatasize()
+            returndatacopy(ptr, 0, size)
+
+            switch result
+            case 0 { revert(ptr, size) }
+            default { return(ptr, size) }
+        }
+    }
 }

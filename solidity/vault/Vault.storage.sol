@@ -26,4 +26,6 @@ contract VaultStorage {
 
     mapping(bytes32 => uint256) public chainUintsLength;
     mapping(bytes32 => uint256) public chainAddressLength;
+
+    mapping(address => bool) public nonTaxable;
 }

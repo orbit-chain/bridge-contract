@@ -1,34 +1,10 @@
 pragma solidity 0.5.0;
 
 import "../utils/Owned.sol";
+import "./OrbitMinter.storage.sol";
 
-contract OrbitMinter is Owned {
+contract OrbitMinter is Owned, OrbitMinterStorage {
     string public constant chain = "ORBIT";
-
-    bool public isActivated = true;
-
-    address payable public implementation;
-
-    uint public depositCount = 0;
-
-    mapping(bytes32 => bool) public isConfirmed;
-    mapping(bytes32 => bool) public isValidChain;
-
-    mapping(bytes32 => bytes) public tokens;
-    mapping(bytes32 => address) public tokenAddr;
-    mapping(address => bytes32) public tokenSummaries;
-
-    bytes32 public govId;
-
-    uint public bridgingFee;
-    address public feeTokenAddress;
-    address payable public feeGovernance;
-
-    uint public taxRate;
-    address public taxReceiver;
-
-    address public tokenDeployer;
-    address public hubContract;
 
     constructor(address multisigAddr, address payable _implementation, bytes32 _govId) public {
         governance = multisigAddr;

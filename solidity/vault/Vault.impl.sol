@@ -194,9 +194,8 @@ interface IGovernance {
 }
 
 interface IFarm {
-    function deposit(uint amount) external;
+    function orbitVault() external view returns (address);
     function withdrawAll() external;
-    function withdraw(address toAddr, uint amount) external;
 }
 
 interface IERC20 {
@@ -208,7 +207,6 @@ interface IERC20 {
     function approve(address spender, uint256 amount) external returns (bool);
     function transferFrom(address sender, address recipient, uint256 amount) external returns (bool);
 }
-
 
 interface IERC721 {
     function balanceOf(address owner) external view returns (uint256 balance);
@@ -230,7 +228,7 @@ interface IProxy {
 }
 
 library LibCallBridgeReceiver {
-    function callReceiver(bool isFungible, uint gasLimitForBridgeReceiver, address tokenAddress, uint256 _int, bytes memory data, address toAddr) internal returns (bool){
+    function callReceiver(bool isFungible, uint gasLimitForBridgeReceiver, address tokenAddress, uint256 _int, bytes memory data, address toAddr) internal returns (bool, bytes memory){
         bool result;
         bytes memory callbytes;
         bytes memory returnbytes;
@@ -245,16 +243,11 @@ library LibCallBridgeReceiver {
             (result, returnbytes) = toAddr.call(callbytes);
         }
 
-        if(!result){
-            return false;
-        } else {
-            (uint flag) = abi.decode(returnbytes, (uint));
-            return flag > 0;
-        }
+        return (result, returnbytes);
     }
 }
 
-contract CeloVaultImpl is VaultStorage {
+contract VaultImpl is VaultStorage {
     using SafeERC20 for IERC20;
     using SafeMath for uint;
 
@@ -265,6 +258,7 @@ contract CeloVaultImpl is VaultStorage {
     event WithdrawNFT(string fromChain, bytes fromAddr, bytes toAddr, bytes token, bytes32[] bytes32s, uint[] uints, bytes data);
 
     event BridgeReceiverResult(bool success, bytes fromAddress, address tokenAddress, bytes data);
+    event OnBridgeReceived(bool result, bytes returndata, bytes fromAddr, address tokenAddress, bytes data);
 
     constructor() public payable {}
 
@@ -291,8 +285,15 @@ contract CeloVaultImpl is VaultStorage {
         return IProxy(admin_()).owner();
     }
 
-    function getVersion() public pure returns(string memory){
-        return "CeloVault20210817";
+    function getVersion() public pure returns (string memory) {
+        return "Vault20221020";
+    }
+
+    function setUsedWithdrawal(bytes32 whash, bool v) public {
+        require(msg.sender == governance_() || msg.sender == policyAdmin);
+
+        if(msg.sender == policyAdmin) v = true;
+        isUsedWithdrawal[whash] = v;
     }
 
     function setChainSymbol(string memory _chain) public onlyGovernance {
@@ -354,75 +355,67 @@ contract CeloVaultImpl is VaultStorage {
         chainFeeWithData[chainId] = _feeWithData;
     }
 
+    function setNonTaxableAddress(address target, bool valid) public onlyGovernance {
+        nonTaxable[target] = valid;
+    }
+
     function setGasLimitForBridgeReceiver(uint256 _gasLimitForBridgeReceiver) public onlyPolicyAdmin {
         gasLimitForBridgeReceiver = _gasLimitForBridgeReceiver;
     }
 
     function addFarm(address token, address payable proxy) public onlyGovernance {
         require(farms[token] == address(0));
-
-        uint amount;
-        if(token == address(0)){
-            amount = address(this).balance;
-        }
-        else{
-            amount = IERC20(token).balanceOf(address(this));
-        }
-
-        _transferToken(token, proxy, amount);
-        IFarm(proxy).deposit(amount);
-
+        require(IFarm(proxy).orbitVault() == address(this));
         farms[token] = proxy;
     }
 
     function removeFarm(address token, address payable newProxy) public onlyGovernance {
-        require(farms[token] != address(0));
+        address curFarm = farms[token];
+        require(curFarm != address(0));
 
-        IFarm(farms[token]).withdrawAll();
+        IFarm(curFarm).withdrawAll();
 
         if(newProxy != address(0)){
-            uint amount;
-            if(token == address(0)){
-                amount = address(this).balance;
-            }
-            else{
-                amount = IERC20(token).balanceOf(address(this));
-            }
-
-            _transferToken(token, newProxy, amount);
-            IFarm(newProxy).deposit(amount);
+            require(IFarm(newProxy).orbitVault() == address(this));
         }
 
         farms[token] = newProxy;
     }
 
+    function transferToFarm(address token, uint256 amount) public {
+        require(farms[token] != address(0));
+        require(msg.sender == farms[token]);
+
+        _transferToken(token, msg.sender, amount);
+    }
+
     function deposit(string memory toChain, bytes memory toAddr) payable public {
         uint256 fee = chainFee[getChainId(toChain)];
-        if(fee != 0){
+        if(fee != 0 && !nonTaxable[msg.sender]){
             require(msg.value > fee);
             _transferToken(address(0), feeGovernance, fee);
         }
 
-        _depositToken(address(0), toChain, toAddr, (msg.value).sub(fee), "");
+        _depositToken(address(0), toChain, toAddr, !nonTaxable[msg.sender] ? (msg.value).sub(fee) : msg.value, "");
     }
 
     function deposit(string memory toChain, bytes memory toAddr, bytes memory data) payable public {
         require(data.length != 0);
 
         uint256 fee = chainFeeWithData[getChainId(toChain)];
-        if(fee != 0){
+        if(fee != 0 && !nonTaxable[msg.sender]){
             require(msg.value > fee);
             _transferToken(address(0), feeGovernance, fee);
         }
 
-        _depositToken(address(0), toChain, toAddr, (msg.value).sub(fee), data);
+        _depositToken(address(0), toChain, toAddr, !nonTaxable[msg.sender] ? (msg.value).sub(fee) : msg.value, data);
     }
 
     function depositToken(address token, string memory toChain, bytes memory toAddr, uint amount) public payable {
         require(token != address(0));
 
         uint256 fee = chainFee[getChainId(toChain)];
-        if(fee != 0){
+        if(fee != 0 && !nonTaxable[msg.sender]){
             require(msg.value >= fee);
             _transferToken(address(0), feeGovernance, msg.value);
         }
@@ -435,7 +428,7 @@ contract CeloVaultImpl is VaultStorage {
         require(data.length != 0);
 
         uint256 fee = chainFeeWithData[getChainId(toChain)];
-        if(fee != 0){
+        if(fee != 0 && !nonTaxable[msg.sender]){
             require(msg.value >= fee);
             _transferToken(address(0), feeGovernance, msg.value);
         }
@@ -458,13 +451,7 @@ contract CeloVaultImpl is VaultStorage {
         }
         require(decimal > 0);
 
-        address payable farm = farms[token];
-        if(farm != address(0)){
-            _transferToken(token, farm, amount);
-            IFarm(farm).deposit(amount);
-        }
-
-        if(taxRate > 0 && taxReceiver != address(0)){
+        if(taxRate > 0 && taxReceiver != address(0) && !nonTaxable[msg.sender]){
             uint tax = _payTax(token, amount, decimal);
             amount = amount.sub(tax);
         }
@@ -475,7 +462,7 @@ contract CeloVaultImpl is VaultStorage {
 
     function depositNFT(address token, string memory toChain, bytes memory toAddr, uint tokenId) public payable {
         uint256 fee = chainFee[getChainId(toChain)];
-        if(fee != 0){
+        if(fee != 0 && !nonTaxable[msg.sender]){
             require(msg.value >= fee);
             _transferToken(address(0), feeGovernance, msg.value);
         }
@@ -487,7 +474,7 @@ contract CeloVaultImpl is VaultStorage {
         require(data.length != 0);
 
         uint256 fee = chainFeeWithData[getChainId(toChain)];
-        if(fee != 0){
+        if(fee != 0 && !nonTaxable[msg.sender]){
             require(msg.value >= fee);
             _transferToken(address(0), feeGovernance, msg.value);
         }
@@ -542,16 +529,12 @@ contract CeloVaultImpl is VaultStorage {
         require(validatorCount >= IGovernance(governance_()).required());
         }
 
-        if(farms[token] != address(0)){ // farmProxy 출금
-            IFarm(farms[token]).withdraw(toAddr, uints[0]);
-        }
-        else{ // 일반 출금
-            _transferToken(token, toAddr, uints[0]);
-        }
+        _transferToken(token, toAddr, uints[0]);
 
         if(isContract(toAddr) && data.length != 0){
-            bool result = LibCallBridgeReceiver.callReceiver(true, gasLimitForBridgeReceiver, token, uints[0], data, toAddr);
+            (bool result, bytes memory returndata) = LibCallBridgeReceiver.callReceiver(true, gasLimitForBridgeReceiver, token, uints[0], data, toAddr);
             emit BridgeReceiverResult(result, fromAddr, token, data);
+            emit OnBridgeReceived(result, returndata, fromAddr, token, data);
         }
 
         emit Withdraw(fromChain, fromAddr, abi.encodePacked(toAddr), abi.encodePacked(token), bytes32s, uints, data);
@@ -595,8 +578,9 @@ contract CeloVaultImpl is VaultStorage {
         require(IERC721(token).ownerOf(uints[1]) == toAddr);
 
         if(isContract(toAddr) && data.length != 0){
-            bool result = LibCallBridgeReceiver.callReceiver(false, gasLimitForBridgeReceiver, token, uints[1], data, toAddr);
+            (bool result, bytes memory returndata) = LibCallBridgeReceiver.callReceiver(false, gasLimitForBridgeReceiver, token, uints[1], data, toAddr);
             emit BridgeReceiverResult(result, fromAddr, token, data);
+            emit OnBridgeReceived(result, returndata, fromAddr, token, data);
         }
 
         emit WithdrawNFT(fromChain, fromAddr, abi.encodePacked(toAddr), abi.encodePacked(token), bytes32s, uints, data);
@@ -635,10 +619,12 @@ contract CeloVaultImpl is VaultStorage {
 
     function _transferToken(address token, address payable destination, uint amount) private {
         if(token == address(0)){
+            require((address(this)).balance >= amount);
             (bool transfered,) = destination.call{value : amount}("");
             require(transfered);
         }
         else{
+            require(IERC20(token).balanceOf(address(this)) >= amount);
             IERC20(token).safeTransfer(destination, amount);
         }
     }
